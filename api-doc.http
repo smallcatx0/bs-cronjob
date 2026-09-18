@@ -1,0 +1,29 @@
+
+@baseurl = http://127.0.0.1:8083
+
+// 健康检查
+GET {{baseurl}}/healthz
+
+###
+// 服务探活 
+GET {{baseurl}}/ready
+
+###
+// 测试接口
+GET {{baseurl}}/test
+    # ?table=bs_no
+    ?table=bs_sth_task
+
+### 创建定时任务
+POST {{baseurl}}/admin/jobs/add
+
+{
+    "name": "test",
+    "type": "http",
+    "schedule_type": "once",
+    "cron_expr": "",
+    "execute_at": "2024-06-01 12:00:00",
+    "payload": "{\"url\": \"http://example.com\"}",
+    "timeout_sec": 300
+}
+
