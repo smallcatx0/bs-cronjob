@@ -5,16 +5,23 @@
 
 ## 架构
 
-- 周期任务(cron):`asynq.Scheduler` 注册 cronspec;任务启用/停用/更新后自动重建 Scheduler
+- 周期任务(cron):`asynq.Scheduler` 注册 cronspec;启用/停用增量同步 `RegisterCron` / `UnregisterCron`,仅进程启动时按 DB 全量重建
 - 一次性任务(once):`client.Enqueue + ProcessAt(execute_at)`,固定 TaskID(`job:once:{id}`),停用/删除时撤销
 - 手动运行:立即入队,`trigger_type=manual`,不影响任务状态
 - 执行入口:`internal/tasks.HandleJobExec`,按类型分发 http / shell / gofunc,前后写 `bs_job_log`
+- 下次执行时间(`next_run`):cron 任务启用时计算写入,每次执行完重新计算,停用时清除;once 任务入队时写入 `execute_at`,停用/执行完成后清除
+
+> cron 表达式为标准 5 段(`分 时 日 月 周`),与 asynq 调度器解析器一致,支持 `@every` 等描述符,不支持秒字段/6 段 Quartz 格式。
+
+## 任务字段
+
+`bs_job` 主要字段:`name` 任务名、`description` 任务描述(可选,≤255)、`type`、`status`、`schedule_type`、`cron_expr` / `execute_at`、`payload`、`timeout_sec`、`next_run`。
 
 ## 启动
 
 ```bash
 # 1. 初始化数据库表
-mysql -h10.2.3.18 -ugobs -p bs < sql/schema.sql
+mysql -h127.0.0.1 -ugobs -p bs < doc/schema.sql
 
 # 2. 拉取依赖(新增了 github.com/hibiken/asynq)
 go mod tidy
@@ -57,24 +64,14 @@ tasks.Register("check_v3_domain_list", func(ctx context.Context, args json.RawMe
 |---|---|---|
 | /list | GET | 分页查询(name/type/status/schedule_type 过滤) |
 | /add | POST | 新建(默认停用) |
-| /detail | GET | 详情(?id=) |
-| /update | POST | 更新(仅停用状态,按提交字段更新) |
+| /detail | POST | 详情(query ?id=) |
+| /update | POST | 更新(仅停用状态,按提交字段更新,含 description) |
 | /delete | POST | 删除(启用中不可删) |
 | /run | POST | 手动立即执行一次 |
-| /toggle | POST | 启用/停用 `{"id":1,"status":1}` |
+| /toggle | POST | 启用/停用 `{"id":1,"status":1}`,同步维护 next_run |
 | /log | POST | 运行记录分页(job_id/job_name/status/trigger_type 过滤) |
 | /gofuncs | GET | 已注册 go func 名称列表 |
 
-## 配置(conf/app.yaml 新增)
-
-```yaml
-asynq:
-  queue: default     # 队列名
-  concurrency: 10    # worker 并发数
-shell:
-  whitelist:         # shell 任务白名单(基名或全路径)
-    - echo
-```
 
 ## 状态机
 
