@@ -31,8 +31,8 @@ const TypeJobExec = "job:exec"
 var cronParser = cron.NewParser(cron.Minute | cron.Hour |
 	cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
-// nextCronRun 计算 cron 表达式在 from 之后的下一次执行时间
-func nextCronRun(expr string, from time.Time) (time.Time, error) {
+// NextCronRun 计算 cron 表达式在 from 之后的下一次执行时间
+func NextCronRun(expr string, from time.Time) (time.Time, error) {
 	sch, err := cronParser.Parse(expr)
 	if err != nil {
 		return time.Time{}, err
@@ -306,7 +306,7 @@ func HandleJobExec(ctx context.Context, t *asynq.Task) error {
 	}
 	if job.ScheduleType == rds.SchedCron {
 		// 周期任务: 根据 cron 表达式算出下次执行时间, 写入 next_run
-		if next, cerr := nextCronRun(job.CronExpr, time.Now()); cerr != nil {
+		if next, cerr := NextCronRun(job.CronExpr, time.Now()); cerr != nil {
 			glog.Z().Warn(fmt.Sprintf("[tasks] calc next run fail, id=%d name=%s expr=%s err=%v",
 				job.ID, job.Name, job.CronExpr, cerr))
 		} else {

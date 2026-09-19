@@ -252,6 +252,10 @@ func (Jobs) Toggle(c *gin.Context) {
 				resp.Fail(c, err)
 				return
 			}
+			// 启用时计算下次执行时间并写入 next_run
+			if next, cerr := tasks.NextCronRun(job.CronExpr, time.Now()); cerr == nil {
+				_ = rds.SetNextRun(job.ID, &next)
+			}
 		case rds.SchedOnce:
 			if job.ExecuteAt == nil || !job.ExecuteAt.After(time.Now()) {
 				resp.Fail(c, resp.ParamInValid("执行时间已过期, 无法启用"))
@@ -277,6 +281,8 @@ func (Jobs) Toggle(c *gin.Context) {
 		case rds.SchedOnce:
 			tasks.DeletePendingOnce(job)
 		}
+		// 停用时清除下次执行时间
+		_ = rds.SetNextRun(job.ID, nil)
 	}
 	job, _ = rds.GetJob(job.ID)
 	resp.Succ(c, job)
