@@ -9,8 +9,8 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// cronParser 与 asynq scheduler 一致: 秒可选, 支持 quartz 风格 `?`
-var cronParser = cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour |
+// cronParser 与 asynq scheduler 保持一致: 标准 5 段(分 时 日 月 周), 支持 @every 等描述符, 不支持秒字段
+var cronParser = cron.NewParser(cron.Minute | cron.Hour |
 	cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 // CheckCronExpr 校验 cron 表达式
@@ -65,7 +65,6 @@ func (p *JobAdd) Valid() error {
 
 type JobUpdate struct {
 	ID         int64  `json:"id" binding:"required"`
-	Name       string `json:"name" binding:"omitempty,max=128"`
 	CronExpr   string `json:"cron_expr" binding:"omitempty,max=128"`
 	ExecuteAt  string `json:"execute_at" binding:"omitempty,datetime=2006-01-02 15:04:05"`
 	Payload    string `json:"payload" binding:"omitempty"`

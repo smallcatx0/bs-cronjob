@@ -6,7 +6,7 @@ const http = axios.create({ baseURL: '/admin/jobs', timeout: 15000 })
 http.interceptors.response.use(
   (res) => {
     const b = res.data
-    if (b.errcode !== 200) {
+    if (b.errcode != 0) {
       ElMessage.error(b.msg || '请求失败')
       return Promise.reject(new Error(b.msg))
     }

@@ -1,9 +1,5 @@
 # 日志包
 
-
-
-
-
 ### 文件日志
 
 基于 `go.uber.org/zap`封装的日志包
@@ -30,7 +26,7 @@ glog.DebugF("测试模板日志age=%d", "requestId", 23)
 
 `/home/logs/tank/curr.log`  日志文件中 每行json
 
-```log
+```json
 {"level":"debug","ts":"2021-05-17T15:09:24.717+0800","caller":"glog/log_test.go:22","msg":"test debug ","request_id":"","extra":[]}
 {"level":"debug","ts":"2021-05-17T15:09:24.745+0800","caller":"glog/log_test.go:23","msg":"test debug with requestId","request_id":"requestId","extra":[]}
 {"level":"debug","ts":"2021-05-17T15:09:24.745+0800","caller":"glog/log_test.go:24","msg":"test debug with more","request_id":"requestId","extra":["extra one","extra two"]}
@@ -41,8 +37,7 @@ glog.DebugF("测试模板日志age=%d", "requestId", 23)
 ```
 
 
-
-### 钉钉群机器人
+### 钉钉群机器人告警
 
 #### 初始化
 

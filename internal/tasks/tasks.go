@@ -17,6 +17,7 @@ import (
 
 	"cron-job/internal/conf"
 	"cron-job/models/dao/rds"
+	"cron-job/pkg/glog"
 
 	"github.com/hibiken/asynq"
 	"go.uber.org/zap"
@@ -65,7 +66,7 @@ func InitClient() {
 // HTTP 服务侧使用,启动时按 DB 中启用的 cron 任务重建 Scheduler。
 func InitScheduler() {
 	ReloadScheduler()
-	zap.L().Info("[tasks] asynq scheduler started, queue=" + Queue())
+	glog.Z().Info("[tasks] asynq scheduler started, queue=" + Queue())
 }
 
 // Serve 启动消费端(asynq server),监听队列并执行 job:exec。
@@ -80,14 +81,14 @@ func Serve() {
 	}
 	server = asynq.NewServer(redisOpt(), asynq.Config{
 		Concurrency: concurrency,
-		// Logger:      asynq.Logger{s: zap.L().Sugar()},
+		Logger:      &zapLogger{s: glog.Z().Sugar()},
 	})
 	go func() {
 		if err := server.Run(mux); err != nil {
-			zap.L().Error("[tasks] asynq server exit: " + err.Error())
+			glog.Z().Error("[tasks] asynq server exit: " + err.Error())
 		}
 	}()
-	zap.L().Info("[tasks] asynq consumer started, queue=" + Queue())
+	glog.Z().Info("[tasks] asynq consumer started, queue=" + Queue())
 }
 
 // Shutdown 优雅退出
@@ -118,11 +119,11 @@ func ReloadScheduler() {
 		}
 		s := asynq.NewScheduler(redisOpt(), &asynq.SchedulerOpts{
 			Location: time.Local,
-			Logger:   &zapLogger{s: zap.L().Sugar()},
+			Logger:   &zapLogger{s: glog.Z().Sugar()},
 		})
 		jobs, err := rds.EnabledCronJobs()
 		if err != nil {
-			zap.L().Error("[tasks] load cron jobs fail: " + err.Error())
+			glog.Z().Error("[tasks] load cron jobs fail: " + err.Error())
 			return
 		}
 		for i := range jobs {
@@ -130,17 +131,17 @@ func ReloadScheduler() {
 			task := newTask(j.ID, rds.TriggerCron)
 			if _, err := s.Register(j.CronExpr, task,
 				asynq.Queue(Queue()), asynq.MaxRetry(0)); err != nil {
-				zap.L().Error(fmt.Sprintf("[tasks] register cron job fail, id=%d name=%s expr=%s err=%v",
+				glog.Z().Error(fmt.Sprintf("[tasks] register cron job fail, id=%d name=%s expr=%s err=%v",
 					j.ID, j.Name, j.CronExpr, err))
 			}
 		}
 		go func() {
 			if err := s.Run(); err != nil {
-				zap.L().Error("[tasks] scheduler exit: " + err.Error())
+				glog.Z().Error("[tasks] scheduler exit: " + err.Error())
 			}
 		}()
 		sched = s
-		zap.L().Info(fmt.Sprintf("[tasks] scheduler reloaded, cron jobs=%d", len(jobs)))
+		glog.Z().Info(fmt.Sprintf("[tasks] scheduler reloaded, cron jobs=%d", len(jobs)))
 	}()
 }
 
@@ -174,14 +175,14 @@ func EnqueueOnce(job *rds.Job) error {
 
 // DeletePendingOnce 删除一次性任务的待执行 asynq 任务(停用/删除时调用)
 func DeletePendingOnce(job *rds.Job) {
-	if job.TaskID == "" {
+	if job.ID == 0 {
 		return
 	}
 	insp := asynq.NewInspector(redisOpt())
 	defer insp.Close()
-	if err := insp.DeleteTask(Queue(), job.TaskID); err != nil && !errors.Is(err, asynq.ErrTaskNotFound) {
-		zap.L().Error(fmt.Sprintf("[tasks] delete pending task fail, id=%d task=%s err=%v",
-			job.ID, job.TaskID, err))
+	if err := insp.DeleteTask(Queue(), OnceTaskID(job.ID)); err != nil && !errors.Is(err, asynq.ErrTaskNotFound) {
+		glog.Z().Error(fmt.Sprintf("[tasks] delete pending task fail, id=%d task=%s err=%v",
+			job.ID, OnceTaskID(job.ID), err))
 	}
 	_ = rds.ClearTaskInfo(job.ID)
 }
@@ -240,7 +241,7 @@ func HandleJobExec(ctx context.Context, t *asynq.Task) error {
 	}
 
 	if err != nil {
-		zap.L().Warn(fmt.Sprintf("[tasks] job fail, id=%d name=%s trigger=%s err=%v",
+		glog.Z().Warn(fmt.Sprintf("[tasks] job fail, id=%d name=%s trigger=%s err=%v",
 			job.ID, job.Name, p.TriggerType, err))
 		return err
 	}
@@ -252,8 +253,18 @@ type zapLogger struct {
 	s *zap.SugaredLogger
 }
 
-func (l *zapLogger) Debug(args ...interface{}) { l.s.Debug(append([]interface{}{"[asynq] "}, args...)...) }
-func (l *zapLogger) Info(args ...interface{})  { l.s.Info(append([]interface{}{"[asynq] "}, args...)...) }
-func (l *zapLogger) Warn(args ...interface{})  { l.s.Warn(append([]interface{}{"[asynq] "}, args...)...) }
-func (l *zapLogger) Error(args ...interface{}) { l.s.Error(append([]interface{}{"[asynq] "}, args...)...) }
-func (l *zapLogger) Fatal(args ...interface{}) { l.s.Fatal(append([]interface{}{"[asynq] "}, args...)...) }
+func (l *zapLogger) Debug(args ...interface{}) {
+	l.s.Debug(append([]interface{}{"[asynq] "}, args...)...)
+}
+func (l *zapLogger) Info(args ...interface{}) {
+	l.s.Info(append([]interface{}{"[asynq] "}, args...)...)
+}
+func (l *zapLogger) Warn(args ...interface{}) {
+	l.s.Warn(append([]interface{}{"[asynq] "}, args...)...)
+}
+func (l *zapLogger) Error(args ...interface{}) {
+	l.s.Error(append([]interface{}{"[asynq] "}, args...)...)
+}
+func (l *zapLogger) Fatal(args ...interface{}) {
+	l.s.Fatal(append([]interface{}{"[asynq] "}, args...)...)
+}

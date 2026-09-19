@@ -82,7 +82,7 @@ func (Jobs) Add(c *gin.Context) {
 		job.ExecuteAt = p.ExecuteAtTime
 	}
 
-	err = dao.MysqlCli.Create(&job).Error
+	err = dao.MysqlCli.Debug().Create(&job).Error
 	if err != nil {
 		resp.Fail(c, err)
 		return
@@ -127,9 +127,6 @@ func (Jobs) Update(c *gin.Context) {
 	}
 
 	updates := map[string]interface{}{}
-	if p.Name != "" {
-		updates["name"] = p.Name
-	}
 	if p.Payload != "" {
 		updates["payload"] = p.Payload
 	}

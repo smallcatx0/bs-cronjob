@@ -3,10 +3,10 @@ package dao
 import (
 	"context"
 	"cron-job/internal/conf"
+	"cron-job/pkg/glog"
 	"log"
 
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 )
 
 var (
@@ -40,7 +40,7 @@ func ConnRedis(opt *redis.Options) (*redis.Client, error) {
 	ctx := context.Background()
 	_, err := cli.Ping(ctx).Result()
 	if err != nil {
-		zap.L().Error("[dao] redis fail, err=" + err.Error())
+		glog.Z().Error("[dao] redis fail, err=" + err.Error())
 		return nil, err
 	}
 	return cli, nil

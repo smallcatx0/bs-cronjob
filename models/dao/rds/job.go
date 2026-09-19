@@ -39,14 +39,13 @@ const (
 type Job struct {
 	ID           int64      `gorm:"primaryKey; column:id" json:"id"`
 	Name         string     `gorm:"size:128;not null; column:name" json:"name"`
-	Type         string     `gorm:"size:32;not null; column:type" json:"type"` // http / shell / gofunc
-	Status       int        `gorm:"default:0; column:status" json:"status"`    // 0=停用, 1=启用, 2=已过期
+	Type         string     `gorm:"size:32;not null; column:type" json:"type"`                   // http / shell / gofunc
+	Status       int        `gorm:"default:0; column:status" json:"status"`                      // 0=停用, 1=启用, 2=已过期
 	ScheduleType string     `gorm:"size:32;not null; column:schedule_type" json:"schedule_type"` // once / cron
 	CronExpr     string     `gorm:"size:128; column:cron_expr" json:"cron_expr"`
 	ExecuteAt    *time.Time `gorm:"column:execute_at" json:"execute_at"`
 	Payload      string     `gorm:"type:text; column:payload" json:"payload"` // JSON 配置
 	TimeoutSec   int        `gorm:"default:300; column:timeout_sec" json:"timeout_sec"`
-	TaskID       string     `gorm:"size:128; column:task_id" json:"task_id"` // asynq 待执行任务ID(once任务用于撤销)
 	NextRun      *time.Time `gorm:"column:next_run" json:"next_run"`
 	CreatedAt    time.Time  `gorm:"column:created_at" json:"created_at"`
 	UpdatedAt    time.Time  `gorm:"column:updated_at" json:"updated_at"`

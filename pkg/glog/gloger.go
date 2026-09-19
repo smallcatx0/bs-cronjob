@@ -49,6 +49,10 @@ func D() *GLog {
 	return defIns
 }
 
+func Z() *zap.Logger {
+	return defIns.zap
+}
+
 // 新建文件实例
 func NewFileLogger(filename, level string) (*GLog, error) {
 	l := GLog{
@@ -138,8 +142,6 @@ func (l *GLog) Printf(tpl string, args ...interface{}) {
 	)
 }
 
-
-
 func fileWriter(filename string, rotaTime time.Duration, level string) (zapcore.WriteSyncer, error) {
 	ext := filepath.Ext(filename)
 	logfile := filename[:len(filename)-len(ext)] + level + ".%Y%m%d%H" + ext
@@ -156,4 +158,3 @@ func fileWriter(filename string, rotaTime time.Duration, level string) (zapcore.
 	}
 	return zapcore.AddSync(hook), nil
 }
-

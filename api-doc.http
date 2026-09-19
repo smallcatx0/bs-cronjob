@@ -18,12 +18,16 @@ GET {{baseurl}}/test
 POST {{baseurl}}/admin/jobs/add
 
 {
-    "name": "test",
-    "type": "http",
-    "schedule_type": "once",
-    "cron_expr": "",
-    "execute_at": "2024-06-01 12:00:00",
-    "payload": "{\"url\": \"http://example.com\"}",
-    "timeout_sec": 300
+  "name": "echooo",
+  "type": "http",
+  "schedule_type": "cron",
+  "cron_expr": "0 * * * * ?",
+  "execute_at": "",
+  "payload": "{\"method\":\"GET\",\"url\":\"http://127.0.0.1:8083/\"}",
+  "timeout_sec": 300
 }
+
+### 列出所有定时任务
+
+GET {{baseurl}}/admin/jobs/list
 
