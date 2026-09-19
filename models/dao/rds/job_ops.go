@@ -43,6 +43,12 @@ func ClearTaskInfo(id int64) error {
 		Updates(map[string]interface{}{"task_id": "", "next_run": nil}).Error
 }
 
+// SetNextRun 更新周期任务下次执行时间
+func SetNextRun(id int64, nextRun *time.Time) error {
+	return dao.MysqlCli.Model(&Job{}).Where("id = ?", id).
+		Update("next_run", nextRun).Error
+}
+
 // StartJobLog 任务开始执行,写 running 日志
 func StartJobLog(job *Job, triggerType string) *JobLog {
 	now := time.Now()

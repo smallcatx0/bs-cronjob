@@ -239,11 +239,15 @@ func (Jobs) Toggle(c *gin.Context) {
 				resp.Fail(c, resp.ParamInValid(err.Error()))
 				return
 			}
+			if err = tasks.RegisterCron(job); err != nil {
+				resp.Fail(c, resp.ParamInValid("任务注册失败", err.Error()))
+				return
+			}
 			if err = rds.SetStatus(job.ID, rds.StatusOn); err != nil {
+				tasks.UnregisterCron(job.ID) // 落库失败回滚注册
 				resp.Fail(c, err)
 				return
 			}
-			tasks.ReloadScheduler()
 		case rds.SchedOnce:
 			if job.ExecuteAt == nil || !job.ExecuteAt.After(time.Now()) {
 				resp.Fail(c, resp.ParamInValid("执行时间已过期, 无法启用"))
@@ -265,7 +269,7 @@ func (Jobs) Toggle(c *gin.Context) {
 		}
 		switch job.ScheduleType {
 		case rds.SchedCron:
-			tasks.ReloadScheduler()
+			tasks.UnregisterCron(job.ID)
 		case rds.SchedOnce:
 			tasks.DeletePendingOnce(job)
 		}
@@ -295,7 +299,7 @@ func (Jobs) Log(c *gin.Context) {
 	if p.TriggerType != "" {
 		q = q.Where("trigger_type = ?", p.TriggerType)
 	}
-	q = q.Order("id DESC")
+	q = q.Order("started_at DESC, id DESC")
 
 	pg := resp.NewPage(c)
 	q, err = pg.Paginate(q)

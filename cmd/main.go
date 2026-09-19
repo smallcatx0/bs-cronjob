@@ -9,7 +9,7 @@ import (
 )
 
 func init() {
-	bootstrap.InitFlag()
+	bootstrap.InitFlag("conf/app.yaml")
 }
 
 func main() {

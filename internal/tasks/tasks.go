@@ -20,11 +20,25 @@ import (
 	"cron-job/pkg/glog"
 
 	"github.com/hibiken/asynq"
+	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
 
 // TypeJobExec asynq 任务类型
 const TypeJobExec = "job:exec"
+
+// cronParser 与调度器/校验保持一致: 标准 5 段(分 时 日 月 周), 支持 @every 等描述符, 不支持秒字段
+var cronParser = cron.NewParser(cron.Minute | cron.Hour |
+	cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+
+// nextCronRun 计算 cron 表达式在 from 之后的下一次执行时间
+func nextCronRun(expr string, from time.Time) (time.Time, error) {
+	sch, err := cronParser.Parse(expr)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return sch.Next(from), nil
+}
 
 // Payload asynq 任务负载
 type Payload struct {
@@ -38,6 +52,10 @@ var (
 	server *asynq.Server
 	sched  *asynq.Scheduler
 	mu     sync.Mutex
+
+	// cronEntries 记录已注册周期任务的 asynq entryID(jobID -> entryID)。
+	// 仅在当前调度器实例生命周期内有效, 进程重启后由 InitScheduler 全量重建。
+	cronEntries = map[int64]string{}
 )
 
 // Queue 队列名
@@ -69,9 +87,9 @@ func InitScheduler() {
 	glog.Z().Info("[tasks] asynq scheduler started, queue=" + Queue())
 }
 
-// Serve 启动消费端(asynq server),监听队列并执行 job:exec。
+// ConsumerClient 启动消费端(asynq server),监听队列并执行 job:exec。
 // 独立消费程序使用,非阻塞(内部 goroutine 运行)。
-func Serve() {
+func ConsumerClient() {
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(TypeJobExec, HandleJobExec)
 
@@ -98,6 +116,7 @@ func Shutdown() {
 		sched.Shutdown()
 		sched = nil
 	}
+	cronEntries = map[int64]string{}
 	mu.Unlock()
 	if server != nil {
 		server.Shutdown()
@@ -107,8 +126,8 @@ func Shutdown() {
 	}
 }
 
-// ReloadScheduler 依据DB重建 asynq Scheduler(异步)。
-// 任务的启用/停用/更新后调用。
+// ReloadScheduler 依据DB全量重建 asynq Scheduler(异步)。
+// 仅在进程启动(InitScheduler)时调用一次; 运行期任务启停请使用 RegisterCron / UnregisterCron 增量同步。
 func ReloadScheduler() {
 	go func() {
 		mu.Lock()
@@ -126,13 +145,16 @@ func ReloadScheduler() {
 			glog.Z().Error("[tasks] load cron jobs fail: " + err.Error())
 			return
 		}
+		entries := make(map[int64]string, len(jobs))
 		for i := range jobs {
 			j := jobs[i]
 			task := newTask(j.ID, rds.TriggerCron)
-			if _, err := s.Register(j.CronExpr, task,
+			if eid, err := s.Register(j.CronExpr, task,
 				asynq.Queue(Queue()), asynq.MaxRetry(0)); err != nil {
 				glog.Z().Error(fmt.Sprintf("[tasks] register cron job fail, id=%d name=%s expr=%s err=%v",
 					j.ID, j.Name, j.CronExpr, err))
+			} else {
+				entries[j.ID] = eid
 			}
 		}
 		go func() {
@@ -141,8 +163,51 @@ func ReloadScheduler() {
 			}
 		}()
 		sched = s
+		cronEntries = entries
 		glog.Z().Info(fmt.Sprintf("[tasks] scheduler reloaded, cron jobs=%d", len(jobs)))
 	}()
+}
+
+// RegisterCron 增量注册(或更新)单个周期任务到运行中的调度器, 避免全量重建。
+// 任务启用后调用。调度器未就绪时安全跳过, 由下次启动全量加载兜底。
+func RegisterCron(job *rds.Job) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if sched == nil {
+		glog.Z().Warn(fmt.Sprintf("[tasks] scheduler not ready, skip register, id=%d", job.ID))
+		return nil
+	}
+	// 表达式等可能变更, 先注销历史注册项
+	if eid, ok := cronEntries[job.ID]; ok {
+		if err := sched.Unregister(eid); err != nil {
+			glog.Z().Error(fmt.Sprintf("[tasks] unregister stale cron entry fail, id=%d err=%v", job.ID, err))
+		}
+		delete(cronEntries, job.ID)
+	}
+	eid, err := sched.Register(job.CronExpr, newTask(job.ID, rds.TriggerCron),
+		asynq.Queue(Queue()), asynq.MaxRetry(0))
+	if err != nil {
+		return err
+	}
+	cronEntries[job.ID] = eid
+	return nil
+}
+
+// UnregisterCron 从运行中的调度器增量注销单个周期任务。
+// 任务停用/删除后调用。
+func UnregisterCron(jobID int64) {
+	mu.Lock()
+	defer mu.Unlock()
+	eid, ok := cronEntries[jobID]
+	if !ok {
+		return
+	}
+	if sched != nil {
+		if err := sched.Unregister(eid); err != nil {
+			glog.Z().Error(fmt.Sprintf("[tasks] unregister cron entry fail, id=%d err=%v", jobID, err))
+		}
+	}
+	delete(cronEntries, jobID)
 }
 
 // OnceTaskID 一次性任务的固定 asynq TaskID(用于撤销/幂等)
@@ -238,6 +303,15 @@ func HandleJobExec(ctx context.Context, t *asynq.Task) error {
 	if job.ScheduleType == rds.SchedOnce && p.TriggerType != rds.TriggerManual {
 		_ = rds.SetStatus(job.ID, rds.StatusExpired)
 		_ = rds.ClearTaskInfo(job.ID)
+	}
+	if job.ScheduleType == rds.SchedCron {
+		// 周期任务: 根据 cron 表达式算出下次执行时间, 写入 next_run
+		if next, cerr := nextCronRun(job.CronExpr, time.Now()); cerr != nil {
+			glog.Z().Warn(fmt.Sprintf("[tasks] calc next run fail, id=%d name=%s expr=%s err=%v",
+				job.ID, job.Name, job.CronExpr, cerr))
+		} else {
+			_ = rds.SetNextRun(job.ID, &next)
+		}
 	}
 
 	if err != nil {

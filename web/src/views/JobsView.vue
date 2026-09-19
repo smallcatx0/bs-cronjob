@@ -48,6 +48,9 @@
       <el-table-column label="内容" width="80">
         <template #default="{ row }"><el-button size="small" link type="primary" @click="showContent(row)">查看</el-button></template>
       </el-table-column>
+      <el-table-column label="日志" width="80">
+        <template #default="{ row }"><el-button size="small" link type="primary" @click="showLogs(row)">查看</el-button></template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
@@ -148,18 +151,58 @@
         <el-button @click="contentVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 执行日志弹窗 -->
+    <el-dialog v-model="logsVisible" :title="logsTitle" width="760px">
+      <el-table :data="logRows" v-loading="logsLoading" border stripe size="small">
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div style="padding: 8px 16px">
+              <template v-if="row.error">
+                <h4 style="color: #f56c6c; margin: 4px 0">错误</h4>
+                <pre class="log-box err">{{ row.error }}</pre>
+              </template>
+              <h4 style="margin: 4px 0">输出</h4>
+              <pre class="log-box">{{ row.output || '(无输出)' }}</pre>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column prop="trigger_type" label="触发" width="80" />
+        <el-table-column label="结果" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="{ running: 'info', success: 'success', failed: 'danger' }[row.status]">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="开始时间" width="160"><template #default="{ row }">{{ fmtTime(row.started_at) }}</template></el-table-column>
+        <el-table-column label="结束时间" width="160"><template #default="{ row }">{{ fmtTime(row.finished_at) }}</template></el-table-column>
+      </el-table>
+
+      <el-pagination
+        style="margin-top: 12px; justify-content: flex-end"
+        layout="total, sizes, prev, pager, next"
+        :total="logsPage.total"
+        v-model:current-page="logsPage.page"
+        v-model:page-size="logsPage.limit"
+        :page-sizes="[10, 20, 50]"
+        @change="loadLogs"
+      />
+      <template #footer>
+        <el-button @click="logsVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listJobs, addJob, updateJob, deleteJob, runJob, toggleJob, listGoFuncs } from '../api'
+import { listJobs, addJob, updateJob, deleteJob, runJob, toggleJob, listGoFuncs, listLogs } from '../api'
 
 const loading = ref(false)
 const saving = ref(false)
 const rows = ref([])
-const page = reactive({ page: 1, limit: 10, total: 0 })
+const page = reactive({ page: 1, limit: 20, total: 0 })
 const query = reactive({ name: '', type: '', schedule_type: '', status: null })
 
 const editVisible = ref(false)
@@ -180,6 +223,14 @@ const quickCrons = [
 const contentVisible = ref(false)
 const contentTitle = ref('任务内容')
 const payloadTree = ref([])
+
+// 执行日志弹窗
+const logsVisible = ref(false)
+const logsTitle = ref('执行日志')
+const logsLoading = ref(false)
+const logRows = ref([])
+const logsPage = reactive({ page: 1, limit: 10, total: 0 })
+const currentJobId = ref(null)
 
 // 将任意 JSON 转为 el-tree 可展开的节点树
 function buildTree(obj) {
@@ -209,6 +260,28 @@ function showContent(row) {
     payloadTree.value = []
   }
   contentVisible.value = true
+}
+
+async function loadLogs() {
+  if (!currentJobId.value) return
+  logsLoading.value = true
+  try {
+    const data = await listLogs({ job_id: currentJobId.value, page: logsPage.page, limit: logsPage.limit })
+    logRows.value = data?.list || []
+    Object.assign(logsPage, data?.page || {})
+  } finally {
+    logsLoading.value = false
+  }
+}
+
+function showLogs(row) {
+  currentJobId.value = row.id
+  logsTitle.value = `执行日志 - ${row.name}`
+  logsPage.page = 1
+  logsPage.total = 0
+  logRows.value = []
+  logsVisible.value = true
+  loadLogs()
 }
 
 const fmtTime = (t) => (t ? String(t).replace('T', ' ').slice(0, 19) : '-')
@@ -309,4 +382,10 @@ onMounted(() => load(1))
 .json-node { display: inline-flex; gap: 6px; font-size: 13px; }
 .json-key { color: #7d3ff5; font-weight: 600; }
 .json-val { color: #1f7a3f; word-break: break-all; }
+.log-box {
+  background: #0b1021; color: #d5e0ff; padding: 10px; border-radius: 4px;
+  max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  font-size: 12px; margin: 4px 0;
+}
+.log-box.err { color: #ffb4b4; }
 </style>

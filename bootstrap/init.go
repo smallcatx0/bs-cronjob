@@ -51,7 +51,7 @@ func InitProducer() {
 
 // InitConsumer 初始化 asynq 消费端(server),独立消费程序使用
 func InitConsumer() {
-	tasks.Serve()
+	tasks.ConsumerClient()
 }
 
 // 心跳&状态检测

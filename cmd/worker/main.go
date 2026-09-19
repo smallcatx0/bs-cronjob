@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	bootstrap.InitFlag()
+	bootstrap.InitFlag("conf/worker.yaml")
 }
 
 func main() {

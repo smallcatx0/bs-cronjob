@@ -77,7 +77,7 @@ import { listLogs } from '../api'
 
 const loading = ref(false)
 const rows = ref([])
-const page = reactive({ page: 1, limit: 10, total: 0 })
+const page = reactive({ page: 1, limit: 20, total: 0 })
 const query = reactive({ job_id: '', job_name: '', status: '', trigger_type: '' })
 const detailVisible = ref(false)
 const current = ref({})

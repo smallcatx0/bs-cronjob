@@ -1,9 +1,20 @@
 # 基础配置
-app_name: "sth消费者"
-desc: "这是消费者示例项目"
+app_name: "定时任务管理平台-worker"
+desc: "定时任务消费端(asynq consumer)"
 
 metrics: false # 是否开启系统监控
 metrics_dt: 10 # 系统监控间隔
+
+# asynq 消费端(复用主redis)
+asynq:
+  queue: default
+  concurrency: 10
+
+# shell 任务白名单(脚本或可执行程序, 基名或全路径)
+shell:
+  whitelist:
+    - echo
+    # - /data/scripts/backup.sh
 
 # 主数据库
 mysql:

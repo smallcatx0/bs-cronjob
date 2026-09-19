@@ -69,8 +69,9 @@ var (
 	}
 )
 
-func InitFlag() {
-	flag.StringVar(&Param.C, "config", "conf/app.yaml", "配置文件地址")
+// InitFlag 注册命令行参数,defaultConf 为各入口的默认配置文件路径(如 conf/app.yaml / conf/worker.yaml)
+func InitFlag(defaultConf string) {
+	flag.StringVar(&Param.C, "config", defaultConf, "配置文件地址")
 	flag.BoolVar(&Param.H, "help", false, "帮助")
 }
 
