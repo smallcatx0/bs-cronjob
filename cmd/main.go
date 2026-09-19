@@ -3,6 +3,7 @@ package main
 import (
 	bootstrap "cron-job/bootstrap"
 	"cron-job/internal/conf"
+	dbstrategy "cron-job/internal/db_strategy"
 	"cron-job/internal/tasks"
 	"cron-job/middleware/httpmd"
 	routes "cron-job/routes"
@@ -20,6 +21,7 @@ func main() {
 	bootstrap.InitConf(&bootstrap.Param.C)
 	bootstrap.InitLog()
 	bootstrap.InitDB()
+	// 初始化 任务调度生成端
 	bootstrap.InitProducer()
 	bootstrap.Heartbeat()
 
@@ -31,5 +33,11 @@ func main() {
 	// 启动HTTP 服务
 	app.Run(conf.HttpPort())
 	// 等待退出
-	app.WaitExit(tasks.Shutdown)
+	app.WaitExit(shutdown)
+}
+
+// shutdown 优雅退出: 先停 db_strategy 调度器, 再停 asynq 生产/消费端
+func shutdown() {
+	dbstrategy.Instance().Shutdown()
+	tasks.Shutdown()
 }

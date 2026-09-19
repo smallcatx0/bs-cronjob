@@ -23,4 +23,19 @@ func registAdmin(r *gin.Engine) {
 	jobRout.POST("/log", jobs.Log)
 	jobRout.GET("/gofuncs", jobs.GoFuncs)
 
+	// db_strategy 表数据维护策略配置(TTL 清理 / Retry 重试)
+	td := v1.Tabledata{}
+	ttlRout := root.Group("/tabledata/ttl")
+	ttlRout.GET("/list", td.TtlList)
+	ttlRout.POST("/add", td.TtlAdd)
+	ttlRout.GET("/detail", td.TtlDetail)
+	ttlRout.POST("/update", td.TtlUpdate)
+	ttlRout.POST("/delete", td.TtlDelete)
+
+	retryRout := root.Group("/tabledata/retry")
+	retryRout.GET("/list", td.RetryList)
+	retryRout.POST("/add", td.RetryAdd)
+	retryRout.GET("/detail", td.RetryDetail)
+	retryRout.POST("/update", td.RetryUpdate)
+	retryRout.POST("/delete", td.RetryDelete)
 }

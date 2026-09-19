@@ -66,16 +66,19 @@ func ConnMysql(dsn string, isDebug bool) (db *gorm.DB, err error) {
 	return
 }
 
-func GetTmpMysql(dsn string) (db *gorm.DB, err error) {
-	return ConnMysql(dsn, false)
-}
-
 func CloseTmpMysql(db *gorm.DB) {
 	mdb, err := db.DB()
 	if err != nil {
 		return
 	}
 	mdb.Close()
+}
+
+// 数据库链接脱敏
+func DsnMask(dsn string) string {
+	info := strings.SplitN(dsn, "@", 2)
+	u := strings.SplitN(info[0], ":", 2)
+	return u[0] + ":******@" + info[1]
 }
 
 // 接管mysql 日志

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS `bs_job` (
   KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务';
 
+-- 任务运行记录表
 CREATE TABLE IF NOT EXISTS `bs_job_log` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `job_id` BIGINT NOT NULL,
@@ -31,3 +32,40 @@ CREATE TABLE IF NOT EXISTS `bs_job_log` (
   PRIMARY KEY (`id`),
   KEY `idx_job_id` (`job_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='任务运行记录';
+
+-- Retry 策略配置表
+CREATE TABLE IF NOT EXISTS `bs_tabledata_retry` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `unkey` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '任务唯一名',
+  `dsn` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '数据库链接',
+  `db_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '数据库名',
+  `table_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '表名',
+  `column_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '依据字段名',
+  `column_type` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '依据字段类型 unix/timestamp/datetime',
+  `find_wh` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '查找条件',
+  `set_fields` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '更新的字段',
+  `before` BIGINT NOT NULL DEFAULT 0 COMMENT '从当前时间之前多少秒',
+  `duration` BIGINT NOT NULL DEFAULT 0 COMMENT '时间间隔',
+  `limit` BIGINT NOT NULL DEFAULT 0 COMMENT '一次执行条数',
+  `spec` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'cron表达式',
+  `desc` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '描述',
+  PRIMARY KEY (`id`),
+  KEY `idx_unkey` (`unkey`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Retry策略配置';
+
+-- TTL 策略配置表
+CREATE TABLE IF NOT EXISTS `bs_tabledata_ttl` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `unkey` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '策略唯一key',
+  `dsn` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '数据库链接',
+  `db_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '数据库名',
+  `table_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '表名',
+  `column_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '依据字段名',
+  `column_type` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '依据字段类型 unix/timestamp/datetime',
+  `ttl_value` BIGINT NOT NULL DEFAULT 0 COMMENT 'TTL过期时间',
+  `limit` BIGINT NOT NULL DEFAULT 0 COMMENT '一次执行条数',
+  `spec` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'cron表达式',
+  `desc` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '描述',
+  PRIMARY KEY (`id`),
+  KEY `idx_unkey` (`unkey`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='TTL策略配置';

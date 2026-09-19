@@ -2,6 +2,7 @@ package main
 
 import (
 	bootstrap "cron-job/bootstrap"
+	dbstrategy "cron-job/internal/db_strategy"
 	"cron-job/internal/tasks"
 )
 
@@ -21,5 +22,5 @@ func main() {
 	bootstrap.InitConsumer()
 	bootstrap.Heartbeat()
 	// 等待退出
-	bootstrap.WaitingExit(tasks.Shutdown)
+	bootstrap.WaitingExit(dbstrategy.Instance().Shutdown, tasks.Shutdown)
 }

@@ -51,12 +51,17 @@ var (
 
 	server *asynq.Server
 	sched  *asynq.Scheduler
+	mux    *asynq.ServeMux
 	mu     sync.Mutex
 
 	// cronEntries 记录已注册周期任务的 asynq entryID(jobID -> entryID)。
 	// 仅在当前调度器实例生命周期内有效, 进程重启后由 InitScheduler 全量重建。
 	cronEntries = map[int64]string{}
 )
+
+func init() {
+	mux = asynq.NewServeMux()
+}
 
 // Queue 队列名
 func Queue() string {
@@ -67,7 +72,8 @@ func Queue() string {
 	return q
 }
 
-func redisOpt() asynq.RedisClientOpt {
+// RedisOpt 读取配置中的 asynq redis 连接参数(供其他包复用, 如 db_strategy 调度器)
+func RedisOpt() asynq.RedisClientOpt {
 	return asynq.RedisClientOpt{
 		Addr:     conf.AppConf.GetString("redis.addr"),
 		DB:       conf.AppConf.GetInt("redis.db"),
@@ -75,9 +81,14 @@ func redisOpt() asynq.RedisClientOpt {
 	}
 }
 
+// RegisterHandler 在消费端启动前注册额外任务 handler(如 db_strategy 策略任务)
+func RegisterHandler(taskType string, h asynq.HandlerFunc) {
+	mux.HandleFunc(taskType, h)
+}
+
 // InitClient 初始化 asynq client(入队端: 手动/一次性任务入队)
 func InitClient() {
-	Client = asynq.NewClient(redisOpt())
+	Client = asynq.NewClient(RedisOpt())
 }
 
 // InitScheduler 启动调度器(生产端: 按 cronspec 触发周期任务入队)。
@@ -89,15 +100,15 @@ func InitScheduler() {
 
 // ConsumerClient 启动消费端(asynq server),监听队列并执行 job:exec。
 // 独立消费程序使用,非阻塞(内部 goroutine 运行)。
+// 启动前可通过 RegisterHandler 注册额外任务类型。
 func ConsumerClient() {
-	mux := asynq.NewServeMux()
 	mux.HandleFunc(TypeJobExec, HandleJobExec)
 
 	concurrency := conf.AppConf.GetInt("asynq.concurrency")
 	if concurrency <= 0 {
 		concurrency = 10
 	}
-	server = asynq.NewServer(redisOpt(), asynq.Config{
+	server = asynq.NewServer(RedisOpt(), asynq.Config{
 		Concurrency: concurrency,
 		Logger:      &zapLogger{s: glog.Z().Sugar()},
 	})
@@ -136,7 +147,7 @@ func ReloadScheduler() {
 			sched.Shutdown()
 			sched = nil
 		}
-		s := asynq.NewScheduler(redisOpt(), &asynq.SchedulerOpts{
+		s := asynq.NewScheduler(RedisOpt(), &asynq.SchedulerOpts{
 			Location: time.Local,
 			Logger:   &zapLogger{s: glog.Z().Sugar()},
 		})
@@ -243,7 +254,7 @@ func DeletePendingOnce(job *rds.Job) {
 	if job.ID == 0 {
 		return
 	}
-	insp := asynq.NewInspector(redisOpt())
+	insp := asynq.NewInspector(RedisOpt())
 	defer insp.Close()
 	if err := insp.DeleteTask(Queue(), OnceTaskID(job.ID)); err != nil && !errors.Is(err, asynq.ErrTaskNotFound) {
 		glog.Z().Error(fmt.Sprintf("[tasks] delete pending task fail, id=%d task=%s err=%v",
@@ -325,6 +336,11 @@ func HandleJobExec(ctx context.Context, t *asynq.Task) error {
 // zapLogger 将 asynq 日志接到 zap
 type zapLogger struct {
 	s *zap.SugaredLogger
+}
+
+// NewZapLogger 供其他包(如 db_strategy)将 asynq 日志接入 zap 使用
+func NewZapLogger(z *zap.Logger) asynq.Logger {
+	return &zapLogger{s: z.Sugar()}
 }
 
 func (l *zapLogger) Debug(args ...interface{}) {

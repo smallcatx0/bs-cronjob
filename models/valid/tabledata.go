@@ -1,0 +1,95 @@
+package valid
+
+import (
+	"cron-job/middleware/resp"
+)
+
+// TtlQuery tabledata_ttl 列表查询条件
+type TtlQuery struct {
+	UnKey     string `form:"unkey" binding:"omitempty,max=128"`
+	DbName    string `form:"db_name" binding:"omitempty,max=64"`
+	Tablename string `form:"table_name" binding:"omitempty,max=128"`
+}
+
+// TtlAdd 新增 TTL 策略配置
+type TtlAdd struct {
+	UnKey      string `json:"unkey" binding:"required,max=128"`
+	Dsn        string `json:"dsn" binding:"required"`
+	DbName     string `json:"db_name" binding:"omitempty,max=64"`
+	Tablename  string `json:"table_name" binding:"required,max=128"`
+	ColumnName string `json:"column_name" binding:"required,max=64"`
+	ColumnType string `json:"column_type" binding:"required,oneof=unix timestamp datetime"`
+	TtlValue   int64  `json:"ttl_value" binding:"required,min=1"`
+	Limit      int64  `json:"limit" binding:"required,min=1"`
+	Spec       string `json:"spec" binding:"required"`
+	Desc       string `json:"desc" binding:"omitempty,max=255"`
+}
+
+func (p *TtlAdd) Valid() error {
+	return checkSpec(p.Spec)
+}
+
+// TtlUpdate 更新 TTL 策略配置(unkey 为调度任务名组成部分, 不可更新)
+type TtlUpdate struct {
+	ID         int64  `json:"id" binding:"required"`
+	Dsn        string `json:"dsn" binding:"omitempty"`
+	DbName     string `json:"db_name" binding:"omitempty,max=64"`
+	Tablename  string `json:"table_name" binding:"omitempty,max=128"`
+	ColumnName string `json:"column_name" binding:"omitempty,max=64"`
+	ColumnType string `json:"column_type" binding:"omitempty,oneof=unix timestamp datetime"`
+	TtlValue   int64  `json:"ttl_value" binding:"omitempty,min=1"`
+	Limit      int64  `json:"limit" binding:"omitempty,min=1"`
+	Desc       string `json:"desc" binding:"omitempty,max=255"`
+}
+
+// RetryQuery tabledata_retry 列表查询条件
+type RetryQuery struct {
+	Unkey     string `form:"unkey" binding:"omitempty,max=128"`
+	DbName    string `form:"db_name" binding:"omitempty,max=64"`
+	Tablename string `form:"table_name" binding:"omitempty,max=128"`
+}
+
+// RetryAdd 新增 Retry 策略配置
+type RetryAdd struct {
+	Unkey      string `json:"unkey" binding:"required,max=128"`
+	Dsn        string `json:"dsn" binding:"required"`
+	DbName     string `json:"db_name" binding:"omitempty,max=64"`
+	Tablename  string `json:"table_name" binding:"required,max=128"`
+	ColumnName string `json:"column_name" binding:"required,max=64"`
+	ColumnType string `json:"column_type" binding:"required,oneof=unix timestamp datetime"`
+	FindWh     string `json:"find_wh" binding:"required"`
+	SetFields  string `json:"set_fields" binding:"required"`
+	Before     int64  `json:"before" binding:"required,min=1"`
+	Duration   int64  `json:"duration" binding:"required,min=1"`
+	Limit      int64  `json:"limit" binding:"required,min=1"`
+	Spec       string `json:"spec" binding:"required"`
+	Desc       string `json:"desc" binding:"omitempty,max=255"`
+}
+
+func (p *RetryAdd) Valid() error {
+	return checkSpec(p.Spec)
+}
+
+// RetryUpdate 更新 Retry 策略配置(unkey 为调度任务名组成部分, 不可更新)
+type RetryUpdate struct {
+	ID         int64  `json:"id" binding:"required"`
+	Dsn        string `json:"dsn" binding:"omitempty"`
+	DbName     string `json:"db_name" binding:"omitempty,max=64"`
+	Tablename  string `json:"table_name" binding:"omitempty,max=128"`
+	ColumnName string `json:"column_name" binding:"omitempty,max=64"`
+	ColumnType string `json:"column_type" binding:"omitempty,oneof=unix timestamp datetime"`
+	FindWh     string `json:"find_wh" binding:"omitempty"`
+	SetFields  string `json:"set_fields" binding:"omitempty"`
+	Before     int64  `json:"before" binding:"omitempty,min=1"`
+	Duration   int64  `json:"duration" binding:"omitempty,min=1"`
+	Limit      int64  `json:"limit" binding:"omitempty,min=1"`
+	Desc       string `json:"desc" binding:"omitempty,max=255"`
+}
+
+// checkSpec 校验 cron 表达式, 与调度器保持一致: 仅标准 5 段(分 时 日 月 周)及 @every 等描述符
+func checkSpec(spec string) error {
+	if err := CheckCronExpr(spec); err != nil {
+		return resp.ParamInValid(err.Error())
+	}
+	return nil
+}

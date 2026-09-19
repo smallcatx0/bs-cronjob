@@ -5,6 +5,7 @@ package bootstrap
 */
 import (
 	"cron-job/internal/conf"
+	dbstrategy "cron-job/internal/db_strategy"
 	"cron-job/internal/tasks"
 	"cron-job/models/dao"
 	"cron-job/pkg/glog"
@@ -47,10 +48,24 @@ func InitDB() {
 func InitProducer() {
 	tasks.InitClient()
 	tasks.InitScheduler()
+
+	// 初始化 db_strategy 生产端: 读取策略配置注册到 asynq Scheduler,
+	// 触发时入队,HTTP 服务侧使用(需在 InitDB 之后调用)
+	stg, err := dbstrategy.NewDbStrategy(dao.MysqlCli, dao.RedisCli)
+	if err != nil {
+		glog.Z().Error("[bootstrap] db_strategy init fail: " + err.Error())
+		return
+	}
+	stg.Regist()
 }
 
 // InitConsumer 初始化 asynq 消费端(server),独立消费程序使用
 func InitConsumer() {
+	// 初始化 db_strategy 消费端: 预建带配置库的单例并注册策略任务 handler,
+	// 需在 InitConsumer 之前调用(消费端执行时按 payload 的 Kind+ID 回查配置库)
+	dbstrategy.InitInstance(dao.MysqlCli, dao.RedisCli)
+	dbstrategy.RegisterHandlers()
+
 	tasks.ConsumerClient()
 }
 

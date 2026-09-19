@@ -1,0 +1,497 @@
+package dbstrategy
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"cron-job/internal/conf"
+	"cron-job/internal/tasks"
+	"cron-job/models/dao"
+	rds "cron-job/models/dao/rds"
+	"cron-job/pkg/glog"
+
+	"github.com/hibiken/asynq"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+)
+
+const (
+	sqlTimeOut = 60 // sql执行超时
+	LockKeyTpl = "bs:dbauto:%s"
+
+	lockTTL           = 300 * time.Second // 锁有效期
+	lockRenewInterval = 60 * time.Second  // 执行期间续租间隔(约 lockTTL/5)
+
+	logPre = "[db_strategy] "
+)
+
+// 策略配置模型与时间列类型常量已迁移至 models/dao/rds(tabledata.go), 此处保留别名兼容包内引用
+var (
+	ColumType_Unix      = rds.ColumType_Unix
+	ColumType_Timestamp = rds.ColumType_Timestamp
+	ColumType_Datetime  = rds.ColumType_Datetime
+)
+
+type (
+	TabledataTtl   = rds.TabledataTtl
+	TabledataRetry = rds.TabledataRetry
+)
+
+// unlockScript 仅当锁仍为自己持有时删除(compare-and-delete), 避免误删其他实例重新抢到的锁
+var unlockScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+	return redis.call("DEL", KEYS[1])
+end
+return 0
+`)
+
+// renewScript 仅当锁仍为自己持有时续期(compare-and-pexpire), 避免给别人的锁续命
+var renewScript = redis.NewScript(`
+if redis.call("GET", KEYS[1]) == ARGV[1] then
+	return redis.call("PEXPIRE", KEYS[1], ARGV[2])
+end
+return 0
+`)
+
+// asynq 任务类型, 冒号后为策略 kind, 与 Payload.Kind 一致
+const (
+	TypeTtlStrategy   = "dbstrategy:ttl"
+	TypeRetryStrategy = "dbstrategy:retry"
+
+	KindTtl   = "ttl"
+	KindRetry = "retry"
+)
+
+// Payload db_strategy asynq 任务负载, 仅携带策略 Kind+ID, 消费端按此查配置库获取最新完整配置
+type Payload struct {
+	Kind string `json:"kind"` // ttl / retry
+	ID   int64  `json:"id"`   // 策略配置行主键(tabledata_ttl/tabledata_retry.id)
+}
+
+type DbStrategy struct {
+	Logger   *zap.Logger
+	sched    *asynq.Scheduler // 按 cronspec 触发策略任务入队(生产端)
+	client   *asynq.Client    // 供测试/运行期手动入队使用
+	db       *gorm.DB         // 配置表所在的数据库链接
+	redisCli *redis.Client
+	ttl      *rds.TabledataTtl
+	retry    *rds.TabledataRetry
+	entries  map[string]string // 策略任务名 -> asynq entryID
+	mu       sync.Mutex
+	Debug    bool
+}
+
+var (
+	instance   *DbStrategy
+	instanceMu sync.Mutex
+)
+
+// Instance 返回最近一次构造的 DbStrategy 单例, 供消费端注册 handler 与执行任务使用
+func Instance() *DbStrategy {
+	instanceMu.Lock()
+	defer instanceMu.Unlock()
+	if instance == nil {
+		instance, _ = NewDbStrategy(dao.MysqlCli, dao.RedisCli)
+	}
+	return instance
+}
+
+// InitInstance 消费端启动时预建单例(不启动调度器, 但需备好配置库供执行时查询)
+func InitInstance(db *gorm.DB, redisCli *redis.Client) *DbStrategy {
+	s, _ := NewDbStrategy(db, redisCli)
+	return s
+}
+
+func NewDbStrategy(db *gorm.DB, redisCli *redis.Client) (*DbStrategy, error) {
+	if redisCli == nil {
+		redisCli = dao.RedisCli // 构造时未传入则复用全局 redis 连接
+	}
+	s := &DbStrategy{
+		Logger:   glog.Z(),
+		db:       db,
+		redisCli: redisCli,
+		entries:  make(map[string]string),
+		ttl:      new(rds.TabledataTtl),
+		retry:    new(rds.TabledataRetry),
+	}
+	if redisCli != nil {
+		s.sched = asynq.NewScheduler(tasks.RedisOpt(),
+			&asynq.SchedulerOpts{Location: time.Local, Logger: tasks.NewZapLogger(s.Logger)})
+		s.client = asynq.NewClient(tasks.RedisOpt())
+	}
+	instanceMu.Lock()
+	instance = s
+	instanceMu.Unlock()
+	return s, nil
+}
+
+// TODO: 考虑如何更新定时任务策略(运行期增量同步可参考 tasks.RegisterCron / tasks.UnregisterCron)
+
+// 根据数据库配置注册任务并启动调度器(生产端)
+func (s *DbStrategy) Regist() {
+	// 查询配置注册到 asynq Scheduler 中
+	ttls, err := s.ttl.GetCfgs()
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf(
+			"查询数据%s库配置失败, err=%s",
+			s.ttl.TableName(), err.Error(),
+		))
+	} else {
+		// 依次加入调度器中
+		for i := range ttls {
+			cfg := ttls[i]
+			s.AddCronTask(cfg.Spec, TypeTtlStrategy, "ttl:"+cfg.UnKey, &Payload{Kind: KindTtl, ID: cfg.ID})
+		}
+	}
+	retrys, err := s.retry.GetCfgs()
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf(
+			"查询数据%s库配置失败, err=%s",
+			s.retry.TableName(), err.Error(),
+		))
+	} else {
+		for i := range retrys {
+			cfg := retrys[i]
+			s.AddCronTask(cfg.Spec, TypeRetryStrategy, "retry:"+cfg.Unkey, &Payload{Kind: KindRetry, ID: cfg.ID})
+		}
+	}
+	// 启动调度器(非阻塞, 内部 goroutine 运行)
+	if s.sched != nil {
+		go func() {
+			if err := s.sched.Run(); err != nil {
+				s.Logger.Error(logPre + "scheduler exit: " + err.Error())
+			}
+		}()
+	}
+}
+
+// AddCronTask 按 cronspec(标准 5 段)注册策略任务到调度器, 触发时以固定 TaskID 入队。
+// 重复添加同名任务定为更新; spec 由 Scheduler.Register 校验(asynq 仅支持 5 段表达式)。
+func (s *DbStrategy) AddCronTask(spec, taskType, funName string, p *Payload) {
+	s.Logger.Info(logPre + fmt.Sprintf(
+		"注册任务 %s(%s)", funName, spec,
+	))
+	b, err := json.Marshal(p)
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf("序列化任务%s负载失败, err=%s", funName, err.Error()))
+		return
+	}
+	task := asynq.NewTask(taskType, b)
+	opts := []asynq.Option{
+		asynq.Queue(tasks.Queue()),
+		asynq.MaxRetry(0),
+		asynq.TaskID("dbstrategy:" + funName), // 固定 TaskID, 同秒重复触发自动去重
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sched == nil {
+		s.Logger.Error(logPre + "scheduler 未初始化, 无法注册任务 " + funName)
+		return
+	}
+	// 重复添加任务定为更新: 先注销旧注册项
+	if eid, ok := s.entries[funName]; ok {
+		if err := s.sched.Unregister(eid); err != nil {
+			s.Logger.Error(logPre + fmt.Sprintf("注销旧任务%s注册项失败, err=%s", funName, err.Error()))
+		}
+		delete(s.entries, funName)
+	}
+	eid, err := s.sched.Register(spec, task, opts...)
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf("%s 注册定时任务%s失败, err=%s", conf.HostName(), funName, err.Error()))
+		return
+	}
+	s.entries[funName] = eid
+}
+
+// Shutdown 停止调度器并释放客户端
+func (s *DbStrategy) Shutdown() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sched != nil {
+		s.sched.Shutdown()
+		s.sched = nil
+	}
+	if s.client != nil {
+		_ = s.client.Close()
+		s.client = nil
+	}
+	s.entries = map[string]string{}
+}
+
+// RegisterHandlers 将 db_strategy 任务 handler 注册到 asynq 消费端, 在启动消费端前调用
+func RegisterHandlers() {
+	h := func(ctx context.Context, t *asynq.Task) error {
+		return Instance().Handle(ctx, t)
+	}
+	tasks.RegisterHandler(TypeTtlStrategy, h)
+	tasks.RegisterHandler(TypeRetryStrategy, h)
+}
+
+// Handle asynq 任务执行入口(消费端): 按 payload 的 Kind+ID 查询配置库拿到最新策略配置,
+// 竞争 Redis 分布式锁(补偿 asynq 缺失的 SkipIfStillRunning)后分发到 TTL 清理 / Retry 重试
+func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) error {
+	var p Payload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return fmt.Errorf("%w: payload解析失败 %v", asynq.SkipRetry, err)
+	}
+	if s.db == nil {
+		return fmt.Errorf("%w: 配置库连接为空, 无法查询策略配置", asynq.SkipRetry)
+	}
+	// 按 Kind+ID 查配置库: 取运行期最新策略配置(改配置立即生效), 并拿到锁唯一名与执行闭包
+	var (
+		unkey string
+		runFn func() error
+	)
+	switch p.Kind {
+	case KindTtl:
+		cfg, err := s.ttl.GetByID(p.ID)
+		if err != nil {
+			s.Logger.Error(logPre + fmt.Sprintf("查询ttl策略失败 id=%d err=%s", p.ID, err.Error()))
+			return fmt.Errorf("%w: 查询ttl策略失败 id=%d err=%v", asynq.SkipRetry, p.ID, err)
+		}
+		unkey, runFn = cfg.UnKey, func() error { return s.deleteTableRecord(*cfg) }
+	case KindRetry:
+		cfg, err := s.retry.GetByID(p.ID)
+		if err != nil {
+			s.Logger.Error(logPre + fmt.Sprintf("查询retry策略失败 id=%d err=%s", p.ID, err.Error()))
+			return fmt.Errorf("%w: 查询retry策略失败 id=%d err=%v", asynq.SkipRetry, p.ID, err)
+		}
+		unkey, runFn = cfg.Unkey, func() error { return s.updateTableRecord(*cfg) }
+	default:
+		return fmt.Errorf("%w: 未知策略类型 kind=%s", asynq.SkipRetry, p.Kind)
+	}
+	funName := p.Kind + ":" + unkey
+	// 竞争分布式锁(带 owner token), 未抢到说明其他实例正在执行, 记日志后退出且不触发重试
+	token, ok := s.acquireLock(funName)
+	if !ok {
+		s.Logger.Warn(logPre + fmt.Sprintf("%s 未抢到 %s 任务锁, 跳过执行", conf.HostName(), funName))
+		return nil
+	}
+	// 先停续租再释放锁(defer LIFO), 避免删除后仍尝试续期
+	defer s.releaseLock(funName, token)
+	defer s.startLockRenew(funName, token)()
+
+	return runFn()
+}
+
+// newLockToken 生成锁 owner 标识: 主机名 + 随机串, 区分同机不同任务与不同实例
+func newLockToken() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%s:%d", conf.HostName(), time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%s:%s", conf.HostName(), hex.EncodeToString(b))
+}
+
+// acquireLock 竞争分布式锁, 成功返回 owner token; 竞争失败返回 ("", false)
+func (s *DbStrategy) acquireLock(funcName string) (string, bool) {
+	key := fmt.Sprintf(LockKeyTpl, funcName)
+	token := newLockToken()
+	ok := s.redisCli.SetNX(
+		context.Background(),
+		key,
+		token,
+		lockTTL,
+	).Val()
+	if !ok {
+		return "", false
+	}
+	return token, true
+}
+
+// releaseLock 释放锁, 仅删除自己持有的锁(Lua compare-and-delete)
+func (s *DbStrategy) releaseLock(funcName, token string) {
+	key := fmt.Sprintf(LockKeyTpl, funcName)
+	n, err := unlockScript.Run(context.Background(), s.redisCli, []string{key}, token).Int64()
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf("释放分布式锁失败, redis_key(%s) err=%s", key, err.Error()))
+		return
+	}
+	if n == 0 {
+		s.Logger.Warn(logPre + fmt.Sprintf("锁(%s)已非自己持有(可能超时被抢占), 跳过删除", key))
+	}
+}
+
+// startLockRenew 启动续租 watchdog, 每 lockRenewInterval 仅在自己仍持有时延长 TTL,
+// 防止长任务超过 lockTTL 后锁被其他实例抢占导致并发执行。返回停止函数。
+func (s *DbStrategy) startLockRenew(funcName, token string) (stop func()) {
+	key := fmt.Sprintf(LockKeyTpl, funcName)
+	done := make(chan struct{})
+	var once sync.Once
+	go func() {
+		ticker := time.NewTicker(lockRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				ok, err := renewScript.Run(
+					context.Background(), s.redisCli, []string{key},
+					token, lockTTL.Milliseconds(),
+				).Int()
+				if err != nil {
+					s.Logger.Error(logPre + fmt.Sprintf("续租锁(%s)失败, err=%s", key, err.Error()))
+					continue
+				}
+				if ok == 0 {
+					s.Logger.Warn(logPre + fmt.Sprintf("锁(%s)已丢失(超时被抢占), 停止续租", key))
+					return
+				}
+			}
+		}
+	}()
+	return func() { once.Do(func() { close(done) }) }
+}
+
+// 数据库删除逻辑
+func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) error {
+	db, err := dao.ConnMysql(cfg.Dsn, true)
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf(
+			"数据库(%s)链接失败 err=%s",
+			dao.DsnMask(cfg.Dsn), err.Error(),
+		))
+		return err
+	}
+	if s.Debug {
+		db = db.Debug()
+	}
+	defer dao.CloseTmpMysql(db)
+	st := time.Now()
+	dt := time.Second * time.Duration(cfg.TtlValue)
+	ttl := time.Now().Add(-dt)
+	var sql string
+	switch cfg.ColumnType {
+	case ColumType_Unix:
+		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < %d LIMIT %d",
+			cfg.Tablename, cfg.ColumnName, ttl.Unix(), cfg.Limit)
+	case ColumType_Timestamp:
+		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
+			cfg.Tablename, cfg.ColumnName, ttl.Format("2006-01-02 15:04:05"), cfg.Limit)
+	case ColumType_Datetime:
+		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
+			cfg.Tablename, cfg.ColumnName, ttl.Format("2006-01-02 15:04:05"), cfg.Limit)
+	default:
+		return fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
+			cfg.ColumnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
+	}
+	deletedNum := int64(0)
+	for {
+		rows, err := func() (int64, error) {
+			timeout, cancel := context.WithTimeout(context.Background(), time.Second*sqlTimeOut)
+			defer cancel()
+			res := db.WithContext(timeout).Exec(sql)
+			return res.RowsAffected, res.Error
+		}()
+		if err != nil {
+			s.Logger.Error(logPre + fmt.Sprintf(
+				"表(%s.%s); sql=%s, err=%s",
+				cfg.DbName, cfg.Tablename, sql, err.Error(),
+			))
+			return err
+		}
+		deletedNum += rows
+		if rows == 0 {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	cost := time.Since(st)
+	s.Logger.Info(logPre + fmt.Sprintf(
+		"表(%s.%s) sql=%s 删除%d条，耗时%dms",
+		cfg.DbName, cfg.Tablename, sql, deletedNum, cost/time.Millisecond,
+	))
+	return nil
+}
+
+// 数据库重试逻辑
+
+type CountRes struct {
+	Count int64 `gorm:"column:c"`
+}
+
+func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) error {
+	db, err := dao.ConnMysql(cfg.Dsn, true)
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf(
+			"数据库(%s)链接失败 err=%s",
+			dao.DsnMask(cfg.Dsn), err.Error(),
+		))
+		return err
+	}
+	if s.Debug {
+		db = db.Debug()
+	}
+	defer dao.CloseTmpMysql(db)
+	curr := time.Now()
+	st := curr.Add(-time.Second * time.Duration(cfg.Before))
+	ed := st.Add(time.Second * time.Duration(cfg.Duration))
+	findWhere := ""
+	switch cfg.ColumnType {
+	case ColumType_Unix:
+		findWhere = fmt.Sprintf("`%s` >= %d AND `%s` < %d",
+			cfg.ColumnName, st.Unix(), cfg.ColumnName, ed.Unix())
+	case ColumType_Timestamp:
+		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
+			cfg.ColumnName, st.Format("2006-01-02 15:04:05"), cfg.ColumnName, ed.Format("2006-01-02 15:04:05"),
+		)
+	case ColumType_Datetime:
+		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
+			cfg.ColumnName, st.Format("2006-01-02 15:04:05"), cfg.ColumnName, ed.Format("2006-01-02 15:04:05"),
+		)
+	default:
+		return fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
+			cfg.ColumnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
+	}
+	findWhere += " AND " + cfg.FindWh
+	findSql := fmt.Sprintf(
+		"SELECT count(*) c FROM `%s` WHERE %s",
+		cfg.Tablename, findWhere,
+	)
+	updateSql := fmt.Sprintf(
+		"UPDATE `%s` SET %s WHERE %s",
+		cfg.Tablename, cfg.SetFields, findWhere,
+	)
+	s.Logger.Debug(logPre + "findSql: " + findSql)
+	s.Logger.Debug(logPre + "updateSql: " + updateSql)
+	res := CountRes{}
+	err = db.Raw(findSql).First(&res).Error
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf(
+			"表(%s.%s); sql=%s, err=%s",
+			cfg.DbName, cfg.Tablename, findSql, err.Error(),
+		))
+		return err
+	}
+	if res.Count == 0 {
+		// 不需要更新数据
+		dt := time.Since(curr)
+		s.Logger.Info(logPre + fmt.Sprintf(
+			"表(%s.%s) sql=%s 需无需更新，耗时%dms",
+			cfg.DbName, cfg.Tablename, findSql, dt/time.Millisecond,
+		))
+		return nil
+	}
+	err = func() error {
+		timeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return db.WithContext(timeout).Exec(updateSql).Error
+	}()
+	if err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf(
+			"表(%s.%s); sql=%s, err=%s",
+			cfg.DbName, cfg.Tablename, findSql, err.Error(),
+		))
+		return err
+	}
+	// TODO: 需要更新量，超过某阈值 告警
+
+	return nil
+}
