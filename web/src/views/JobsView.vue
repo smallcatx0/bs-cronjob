@@ -35,6 +35,7 @@
     <el-table :data="rows" v-loading="loading" border stripe size="small">
       <el-table-column prop="id" label="ID" width="60" />
       <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
       <el-table-column prop="type" label="类型" width="80">
         <template #default="{ row }"><el-tag size="small">{{ row.type }}</el-tag></template>
       </el-table-column>
@@ -85,6 +86,9 @@
       <el-form :model="form" label-width="100px">
         <el-form-item label="名称" required>
           <el-input v-model="form.name" maxlength="128" :disabled="!!form.id" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="form.description" type="textarea" :rows="2" maxlength="255" show-word-limit placeholder="任务描述(可选)" />
         </el-form-item>
         <el-form-item label="任务类型" required>
           <el-radio-group v-model="form.type" :disabled="!!form.id">
@@ -206,7 +210,7 @@ const page = reactive({ page: 1, limit: 20, total: 0 })
 const query = reactive({ name: '', type: '', schedule_type: '', status: null })
 
 const editVisible = ref(false)
-const form = reactive({ id: null, name: '', type: 'http', schedule_type: 'cron', cron_expr: '', execute_at: '', timeout_sec: 300 })
+const form = reactive({ id: null, name: '', description: '', type: 'http', schedule_type: 'cron', cron_expr: '', execute_at: '', timeout_sec: 300 })
 const httpForm = reactive({ method: 'GET', url: '', body: '' })
 const shellForm = reactive({ cmd: '', args: '' })
 const gofuncForm = reactive({ func: '', args: '' })
@@ -305,8 +309,8 @@ async function load(p) {
 
 function openEdit(row) {
   Object.assign(form, row
-    ? { id: row.id, name: row.name, type: row.type, schedule_type: row.schedule_type, cron_expr: row.cron_expr, execute_at: fmtTime(row.execute_at) === '-' ? '' : fmtTime(row.execute_at), timeout_sec: row.timeout_sec }
-    : { id: null, name: '', type: 'http', schedule_type: 'cron', cron_expr: '', execute_at: '', timeout_sec: 300 })
+    ? { id: row.id, name: row.name, description: row.description || '', type: row.type, schedule_type: row.schedule_type, cron_expr: row.cron_expr, execute_at: fmtTime(row.execute_at) === '-' ? '' : fmtTime(row.execute_at), timeout_sec: row.timeout_sec }
+    : { id: null, name: '', description: '', type: 'http', schedule_type: 'cron', cron_expr: '', execute_at: '', timeout_sec: 300 })
   httpForm.method = 'GET'; httpForm.url = ''; httpForm.body = ''
   shellForm.cmd = ''; shellForm.args = ''
   gofuncForm.func = ''; gofuncForm.args = ''
@@ -341,7 +345,7 @@ function buildPayload() {
 async function doSave() {
   let payload
   try { payload = buildPayload() } catch (e) { ElMessage.error(e.message); return }
-  const body = { name: form.name, type: form.type, schedule_type: form.schedule_type, cron_expr: form.cron_expr, execute_at: form.execute_at, payload, timeout_sec: form.timeout_sec }
+  const body = { name: form.name, description: form.description, type: form.type, schedule_type: form.schedule_type, cron_expr: form.cron_expr, execute_at: form.execute_at, payload, timeout_sec: form.timeout_sec }
   saving.value = true
   try {
     if (form.id) await updateJob({ id: form.id, ...body })

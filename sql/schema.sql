@@ -2,6 +2,7 @@
 CREATE TABLE IF NOT EXISTS `bs_job` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(128) NOT NULL COMMENT '任务名',
+  `description` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '任务描述',
   `type` VARCHAR(32) NOT NULL COMMENT 'http/shell/gofunc',
   `status` TINYINT NOT NULL DEFAULT 0 COMMENT '0=停用 1=启用 2=已过期',
   `schedule_type` VARCHAR(32) NOT NULL COMMENT 'once/cron',

@@ -32,9 +32,9 @@ func SetStatus(id int64, status int) error {
 }
 
 // SetTaskInfo 记录 asynq 待执行任务ID与下次运行时间(once任务)
-func SetTaskInfo(id int64, taskID string, nextRun *time.Time) error {
+func SetTaskInfo(id int64, nextRun *time.Time) error {
 	return dao.MysqlCli.Model(&Job{}).Where("id = ?", id).
-		Updates(map[string]interface{}{"task_id": taskID, "next_run": nextRun}).Error
+		Updates(map[string]interface{}{"next_run": nextRun}).Error
 }
 
 // ClearTaskInfo 清除待执行任务信息

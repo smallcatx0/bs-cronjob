@@ -39,6 +39,7 @@ const (
 type Job struct {
 	ID           int64      `gorm:"primaryKey; column:id" json:"id"`
 	Name         string     `gorm:"size:128;not null; column:name" json:"name"`
+	Description  string     `gorm:"size:255; column:description" json:"description"`             // 任务描述
 	Type         string     `gorm:"size:32;not null; column:type" json:"type"`                   // http / shell / gofunc
 	Status       int        `gorm:"default:0; column:status" json:"status"`                      // 0=停用, 1=启用, 2=已过期
 	ScheduleType string     `gorm:"size:32;not null; column:schedule_type" json:"schedule_type"` // once / cron

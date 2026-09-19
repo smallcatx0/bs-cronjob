@@ -67,6 +67,7 @@ func (Jobs) Add(c *gin.Context) {
 	}
 	job := rds.Job{
 		Name:         p.Name,
+		Description:  p.Description,
 		Type:         p.Type,
 		Status:       rds.StatusOff,
 		ScheduleType: p.ScheduleType,
@@ -127,6 +128,9 @@ func (Jobs) Update(c *gin.Context) {
 	}
 
 	updates := map[string]interface{}{}
+	if p.Description != "" {
+		updates["description"] = p.Description
+	}
 	if p.Payload != "" {
 		updates["payload"] = p.Payload
 	}

@@ -34,6 +34,7 @@ type JobQuery struct {
 
 type JobAdd struct {
 	Name         string `json:"name" binding:"required,max=128"`
+	Description  string `json:"description" binding:"omitempty,max=255"`
 	Type         string `json:"type" binding:"required,oneof=http shell gofunc"`
 	ScheduleType string `json:"schedule_type" binding:"required,oneof=once cron"`
 	CronExpr     string `json:"cron_expr" binding:"omitempty,max=128"`
@@ -64,11 +65,12 @@ func (p *JobAdd) Valid() error {
 }
 
 type JobUpdate struct {
-	ID         int64  `json:"id" binding:"required"`
-	CronExpr   string `json:"cron_expr" binding:"omitempty,max=128"`
-	ExecuteAt  string `json:"execute_at" binding:"omitempty,datetime=2006-01-02 15:04:05"`
-	Payload    string `json:"payload" binding:"omitempty"`
-	TimeoutSec int    `json:"timeout_sec" binding:"omitempty,min=1"`
+	ID          int64  `json:"id" binding:"required"`
+	Description string `json:"description" binding:"omitempty,max=255"`
+	CronExpr    string `json:"cron_expr" binding:"omitempty,max=128"`
+	ExecuteAt   string `json:"execute_at" binding:"omitempty,datetime=2006-01-02 15:04:05"`
+	Payload     string `json:"payload" binding:"omitempty"`
+	TimeoutSec  int    `json:"timeout_sec" binding:"omitempty,min=1"`
 	// ---
 	ExecuteAtTime *time.Time `json:"-"` // 仅用于 once 任务, 解析 execute_at 后的时间
 }

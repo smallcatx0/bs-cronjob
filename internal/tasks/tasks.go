@@ -235,7 +235,7 @@ func EnqueueOnce(job *rds.Job) error {
 		return err
 	}
 	nextRun := info.NextProcessAt
-	return rds.SetTaskInfo(job.ID, taskID, &nextRun)
+	return rds.SetTaskInfo(job.ID, &nextRun)
 }
 
 // DeletePendingOnce 删除一次性任务的待执行 asynq 任务(停用/删除时调用)
