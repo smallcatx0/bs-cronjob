@@ -1,30 +1,11 @@
-import axios from 'axios'
-import { ElMessage } from 'element-plus'
+import { admin } from './request'
 
-const http = axios.create({ baseURL: '/admin/jobs', timeout: 15000 })
-
-http.interceptors.response.use(
-  (res) => {
-    const b = res.data
-    if (b.errcode != 0) {
-      ElMessage.error(b.msg || '请求失败')
-      return Promise.reject(new Error(b.msg))
-    }
-    return b.data
-  },
-  (err) => {
-    const msg = err.response?.data?.msg || err.message
-    ElMessage.error(msg)
-    return Promise.reject(err)
-  },
-)
-
-export const listJobs = (params) => http.get('/list', { params })
-export const jobDetail = (id) => http.get('/detail', { params: { id } })
-export const addJob = (data) => http.post('/add', data)
-export const updateJob = (data) => http.post('/update', data)
-export const deleteJob = (id) => http.post('/delete', { id })
-export const runJob = (id) => http.post('/run', { id })
-export const toggleJob = (id, status) => http.post('/toggle', { id, status })
-export const listLogs = (params) => http.post('/log?' + new URLSearchParams(params))
-export const listGoFuncs = () => http.get('/gofuncs')
+export const listJobs = (params) => admin.get('/jobs/list', { params })
+export const jobDetail = (id) => admin.get('/jobs/detail', { params: { id } })
+export const addJob = (data) => admin.post('/jobs/add', data)
+export const updateJob = (data) => admin.post('/jobs/update', data)
+export const deleteJob = (id) => admin.post('/jobs/delete', { id })
+export const runJob = (id) => admin.post('/jobs/run', { id })
+export const toggleJob = (id, status) => admin.post('/jobs/toggle', { id, status })
+export const listLogs = (params) => admin.post('/jobs/log?' + new URLSearchParams(params))
+export const listGoFuncs = () => admin.get('/jobs/gofuncs')
