@@ -11,10 +11,10 @@ import (
 const RequestIDKey = "x-b3-traceid"
 
 type body struct {
-	ErrCode   int         `json:"errcode"`
-	Msg       string      `json:"msg"`
-	Data      interface{} `json:"data"`
-	RequestID string      `json:"request_id"`
+	ErrCode   int    `json:"errcode"`
+	Msg       string `json:"msg"`
+	Data      any    `json:"data"`
+	RequestID string `json:"request_id"`
 }
 
 func SuccJsonRaw(c *gin.Context, data string) {

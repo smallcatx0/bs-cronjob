@@ -74,9 +74,16 @@ func CloseTmpMysql(db *gorm.DB) {
 	mdb.Close()
 }
 
-// 数据库链接脱敏
+// 数据库链接脱敏, 对空/非法 DSN 做安全兜底, 避免解析越界 panic
 func DsnMask(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
 	info := strings.SplitN(dsn, "@", 2)
+	if len(info) < 2 {
+		// 不含 @ 分隔符, 无法定位账号密码, 整体脱敏
+		return "******"
+	}
 	u := strings.SplitN(info[0], ":", 2)
 	return u[0] + ":******@" + info[1]
 }

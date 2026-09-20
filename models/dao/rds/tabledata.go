@@ -63,30 +63,33 @@ func (t *TabledataRetry) SetStatus(id int64, status string) error {
 		Update("status", status).Error
 }
 
-// ParseSql 根据 Retry 策略配置生成实际执行的更新 SQL, 逻辑与 db_strategy.updateTableRecord 保持一致,
-// 供前端预览即将执行的语句; column_type 非法时返回 error
-func (t *TabledataRetry) ParseSql() (string, error) {
-	curr := time.Now()
-	st := curr.Add(-time.Second * time.Duration(t.Before))
-	ed := st.Add(time.Second * time.Duration(t.Duration))
-	findWhere := ""
-	switch t.ColumnType {
+// BuildRetrySqls 根据 Retry 配置生成 count 与 update 两条 SQL, 执行端与预览端共用,
+// now 为基准时间由调用方传入以便单测; column_type 非法时返回 error
+func BuildRetrySqls(tablename, columnName, columnType, findWh, setFields string, before, duration int64, now time.Time) (countSql, updateSql string, err error) {
+	st := now.Add(-time.Second * time.Duration(before))
+	ed := st.Add(time.Second * time.Duration(duration))
+	var where string
+	switch columnType {
 	case ColumType_Unix:
-		findWhere = fmt.Sprintf("`%s` >= %d AND `%s` < %d",
-			t.ColumnName, st.Unix(), t.ColumnName, ed.Unix())
-	case ColumType_Timestamp:
-		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
-			t.ColumnName, st.Format("2006-01-02 15:04:05"), t.ColumnName, ed.Format("2006-01-02 15:04:05"))
-	case ColumType_Datetime:
-		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
-			t.ColumnName, st.Format("2006-01-02 15:04:05"), t.ColumnName, ed.Format("2006-01-02 15:04:05"))
+		where = fmt.Sprintf("`%s` >= %d AND `%s` < %d", columnName, st.Unix(), columnName, ed.Unix())
+	case ColumType_Timestamp, ColumType_Datetime:
+		where = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
+			columnName, st.Format("2006-01-02 15:04:05"), columnName, ed.Format("2006-01-02 15:04:05"))
 	default:
-		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
-			t.ColumnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
+		return "", "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
+			columnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
 	}
-	findWhere += " AND " + t.FindWh
-	return fmt.Sprintf("UPDATE `%s` SET %s WHERE %s",
-		t.Tablename, t.SetFields, findWhere), nil
+	where += " AND " + findWh
+	countSql = fmt.Sprintf("SELECT count(*) c FROM `%s` WHERE %s", tablename, where)
+	updateSql = fmt.Sprintf("UPDATE `%s` SET %s WHERE %s", tablename, setFields, where)
+	return countSql, updateSql, nil
+}
+
+// ParseSql 根据 Retry 策略配置生成实际执行的更新 SQL, 供前端预览即将执行的语句;
+// 生成逻辑收敛在 BuildRetrySqls, column_type 非法时返回 error
+func (t *TabledataRetry) ParseSql() (string, error) {
+	_, updateSql, err := BuildRetrySqls(t.Tablename, t.ColumnName, t.ColumnType, t.FindWh, t.SetFields, t.Before, t.Duration, time.Now())
+	return updateSql, err
 }
 
 type TabledataTtl struct {
@@ -129,25 +132,28 @@ func (t *TabledataTtl) SetStatus(id int64, status string) error {
 		Update("status", status).Error
 }
 
-// ParseSql 根据 TTL 策略配置生成实际执行的删除 SQL, 逻辑与 db_strategy.deleteTableRecord 保持一致,
-// 供前端预览即将执行的语句; column_type 非法时返回 error
-func (t *TabledataTtl) ParseSql() (string, error) {
-	dt := time.Second * time.Duration(t.TtlValue)
-	ttl := time.Now().Add(-dt)
-	switch t.ColumnType {
+// BuildTtlDeleteSql 根据 TTL 配置生成删除 SQL, 执行端与预览端共用,
+// cutoff 为过期界限时间由调用方传入以便单测; column_type 非法时返回 error
+// 注意: 保持现有 SQL 格式, 表名/列名不加反引号(与线上执行语句一致)
+func BuildTtlDeleteSql(tablename, columnName, columnType string, cutoff time.Time, limit int64) (string, error) {
+	var where string
+	switch columnType {
 	case ColumType_Unix:
-		return fmt.Sprintf("DELETE FROM %s WHERE %s < %d LIMIT %d",
-			t.Tablename, t.ColumnName, ttl.Unix(), t.Limit), nil
-	case ColumType_Timestamp:
-		return fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
-			t.Tablename, t.ColumnName, ttl.Format("2006-01-02 15:04:05"), t.Limit), nil
-	case ColumType_Datetime:
-		return fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
-			t.Tablename, t.ColumnName, ttl.Format("2006-01-02 15:04:05"), t.Limit), nil
+		where = fmt.Sprintf("%s < %d", columnName, cutoff.Unix())
+	case ColumType_Timestamp, ColumType_Datetime:
+		where = fmt.Sprintf("%s < '%s'", columnName, cutoff.Format("2006-01-02 15:04:05"))
 	default:
 		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
-			t.ColumnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
+			columnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
 	}
+	return fmt.Sprintf("DELETE FROM %s WHERE %s LIMIT %d", tablename, where, limit), nil
+}
+
+// ParseSql 根据 TTL 策略配置生成实际执行的删除 SQL, 供前端预览即将执行的语句;
+// 生成逻辑收敛在 BuildTtlDeleteSql, column_type 非法时返回 error
+func (t *TabledataTtl) ParseSql() (string, error) {
+	cutoff := time.Now().Add(-time.Second * time.Duration(t.TtlValue))
+	return BuildTtlDeleteSql(t.Tablename, t.ColumnName, t.ColumnType, cutoff, t.Limit)
 }
 
 // TabledataStrategyLog TTL/Retry 策略执行日志, 复用 JobLog 状态(running/success/failed)

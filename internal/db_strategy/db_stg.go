@@ -382,22 +382,10 @@ func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) (string, error) {
 	}
 	defer dao.CloseTmpMysql(db)
 	st := time.Now()
-	dt := time.Second * time.Duration(cfg.TtlValue)
-	ttl := time.Now().Add(-dt)
-	var sql string
-	switch cfg.ColumnType {
-	case rds.ColumType_Unix:
-		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < %d LIMIT %d",
-			cfg.Tablename, cfg.ColumnName, ttl.Unix(), cfg.Limit)
-	case rds.ColumType_Timestamp:
-		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
-			cfg.Tablename, cfg.ColumnName, ttl.Format("2006-01-02 15:04:05"), cfg.Limit)
-	case rds.ColumType_Datetime:
-		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
-			cfg.Tablename, cfg.ColumnName, ttl.Format("2006-01-02 15:04:05"), cfg.Limit)
-	default:
-		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
-			cfg.ColumnType, rds.ColumType_Unix, rds.ColumType_Timestamp, rds.ColumType_Datetime)
+	sql, err := rds.BuildTtlDeleteSql(cfg.Tablename, cfg.ColumnName, cfg.ColumnType,
+		time.Now().Add(-time.Second*time.Duration(cfg.TtlValue)), cfg.Limit)
+	if err != nil {
+		return "", err
 	}
 	deletedNum := int64(0)
 	for {
@@ -448,34 +436,11 @@ func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) (string, error) {
 	}
 	defer dao.CloseTmpMysql(db)
 	curr := time.Now()
-	st := curr.Add(-time.Second * time.Duration(cfg.Before))
-	ed := st.Add(time.Second * time.Duration(cfg.Duration))
-	findWhere := ""
-	switch cfg.ColumnType {
-	case rds.ColumType_Unix:
-		findWhere = fmt.Sprintf("`%s` >= %d AND `%s` < %d",
-			cfg.ColumnName, st.Unix(), cfg.ColumnName, ed.Unix())
-	case rds.ColumType_Timestamp:
-		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
-			cfg.ColumnName, st.Format("2006-01-02 15:04:05"), cfg.ColumnName, ed.Format("2006-01-02 15:04:05"),
-		)
-	case rds.ColumType_Datetime:
-		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
-			cfg.ColumnName, st.Format("2006-01-02 15:04:05"), cfg.ColumnName, ed.Format("2006-01-02 15:04:05"),
-		)
-	default:
-		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
-			cfg.ColumnType, rds.ColumType_Unix, rds.ColumType_Timestamp, rds.ColumType_Datetime)
+	findSql, updateSql, err := rds.BuildRetrySqls(cfg.Tablename, cfg.ColumnName, cfg.ColumnType,
+		cfg.FindWh, cfg.SetFields, cfg.Before, cfg.Duration, curr)
+	if err != nil {
+		return "", err
 	}
-	findWhere += " AND " + cfg.FindWh
-	findSql := fmt.Sprintf(
-		"SELECT count(*) c FROM `%s` WHERE %s",
-		cfg.Tablename, findWhere,
-	)
-	updateSql := fmt.Sprintf(
-		"UPDATE `%s` SET %s WHERE %s",
-		cfg.Tablename, cfg.SetFields, findWhere,
-	)
 	s.Logger.Debug(logPre + "findSql: " + findSql)
 	s.Logger.Debug(logPre + "updateSql: " + updateSql)
 	res := CountRes{}
