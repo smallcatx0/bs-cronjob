@@ -28,6 +28,16 @@ const authMenu = [
     path: '/admin/logs',
     icon: Document,
   },
+  {
+    label: '数据库TTL策略',
+    path: '/admin/dbttl',
+    icon: Document,
+  },
+  {
+    label: '数据库重试策略',
+    path: '/admin/retry',
+    icon: Document,
+  },
 ]
 </script>
 

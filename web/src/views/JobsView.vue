@@ -40,7 +40,7 @@
         <template #default="{ row }"><el-tag size="small">{{ row.type }}</el-tag></template>
       </el-table-column>
       <el-table-column prop="schedule_type" label="调度" width="70" />
-      <el-table-column label="调度规则" min-width="180" show-overflow-tooltip>
+      <el-table-column label="调度规则" min-width="80" show-overflow-tooltip>
         <template #default="{ row }">
           <span v-if="row.schedule_type === 'cron'">{{ row.cron_expr }}</span>
           <span v-else>{{ fmtTime(row.execute_at) }}</span>
