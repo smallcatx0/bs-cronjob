@@ -36,7 +36,7 @@ type TabledataRetry struct {
 }
 
 func (*TabledataRetry) TableName() string {
-	return "tabledata_retry"
+	return "bs_tabledata_retry"
 }
 
 func (t *TabledataRetry) GetCfgs() ([]TabledataRetry, error) {
@@ -76,7 +76,7 @@ type TabledataTtl struct {
 }
 
 func (*TabledataTtl) TableName() string {
-	return "tabledata_ttl"
+	return "bs_tabledata_ttl"
 }
 
 func (t *TabledataTtl) GetCfgs() ([]TabledataTtl, error) {

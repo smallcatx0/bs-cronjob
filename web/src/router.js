@@ -24,6 +24,16 @@ const routes = [
         name: 'logs',
         component: () => import('~/views/LogsView.vue'),
       },
+      {
+        path: '/admin/ttl',
+        name: 'ttl',
+        component: () => import('~/views/TtlView.vue'),
+      },
+      {
+        path: '/admin/retry',
+        name: 'retry',
+        component: () => import('~/views/RetryView.vue'),
+      },
     ],
   },
 ]

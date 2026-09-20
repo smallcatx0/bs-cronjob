@@ -29,12 +29,12 @@ const authMenu = [
     icon: Document,
   },
   {
-    label: '数据库TTL策略',
-    path: '/admin/dbttl',
+    label: 'TTL策略',
+    path: '/admin/ttl',
     icon: Document,
   },
   {
-    label: '数据库重试策略',
+    label: 'Retry策略',
     path: '/admin/retry',
     icon: Document,
   },
