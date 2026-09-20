@@ -31,6 +31,7 @@ func registAdmin(r *gin.Engine) {
 	ttlRout.GET("/detail", td.TtlDetail)
 	ttlRout.POST("/update", td.TtlUpdate)
 	ttlRout.POST("/delete", td.TtlDelete)
+	ttlRout.POST("/toggle", td.TtlToggle)
 
 	retryRout := root.Group("/tabledata/retry")
 	retryRout.GET("/list", td.RetryList)
@@ -38,4 +39,5 @@ func registAdmin(r *gin.Engine) {
 	retryRout.GET("/detail", td.RetryDetail)
 	retryRout.POST("/update", td.RetryUpdate)
 	retryRout.POST("/delete", td.RetryDelete)
+	retryRout.POST("/toggle", td.RetryToggle)
 }

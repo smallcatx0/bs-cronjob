@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS `bs_tabledata_retry` (
   `duration` BIGINT NOT NULL DEFAULT 0 COMMENT '时间间隔',
   `limit` BIGINT NOT NULL DEFAULT 0 COMMENT '一次执行条数',
   `spec` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'cron表达式',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'offline' COMMENT '状态 offline/online, 仅online参与调度',
   `desc` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '描述',
   PRIMARY KEY (`id`),
   KEY `idx_unkey` (`unkey`)
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS `bs_tabledata_ttl` (
   `ttl_value` BIGINT NOT NULL DEFAULT 0 COMMENT 'TTL过期时间',
   `limit` BIGINT NOT NULL DEFAULT 0 COMMENT '一次执行条数',
   `spec` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'cron表达式',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'offline' COMMENT '状态 offline/online, 仅online参与调度',
   `desc` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '描述',
   PRIMARY KEY (`id`),
   KEY `idx_unkey` (`unkey`)

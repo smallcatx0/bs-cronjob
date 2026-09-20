@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -131,8 +132,6 @@ func NewDbStrategy(db *gorm.DB, redisCli *redis.Client) (*DbStrategy, error) {
 	return s, nil
 }
 
-// TODO: 考虑如何更新定时任务策略(运行期增量同步可参考 tasks.RegisterCron / tasks.UnregisterCron)
-
 // 根据数据库配置注册任务并启动调度器(生产端)
 func (s *DbStrategy) Regist() {
 	// 查询配置注册到 asynq Scheduler 中
@@ -143,9 +142,12 @@ func (s *DbStrategy) Regist() {
 			s.ttl.TableName(), err.Error(),
 		))
 	} else {
-		// 依次加入调度器中
+		// 依次加入调度器中(仅 online 状态的策略注册到调度器, 运行期增删改同步走 toggle 接口)
 		for i := range ttls {
 			cfg := ttls[i]
+			if cfg.Status != rds.StrategyOnline {
+				continue
+			}
 			s.AddCronTask(cfg.Spec, TypeTtlStrategy, "ttl:"+cfg.UnKey, &Payload{Kind: KindTtl, ID: cfg.ID})
 		}
 	}
@@ -158,6 +160,9 @@ func (s *DbStrategy) Regist() {
 	} else {
 		for i := range retrys {
 			cfg := retrys[i]
+			if cfg.Status != rds.StrategyOnline {
+				continue // 仅 online 状态的策略注册到调度器
+			}
 			s.AddCronTask(cfg.Spec, TypeRetryStrategy, "retry:"+cfg.Unkey, &Payload{Kind: KindRetry, ID: cfg.ID})
 		}
 	}
@@ -173,14 +178,15 @@ func (s *DbStrategy) Regist() {
 
 // AddCronTask 按 cronspec(标准 5 段)注册策略任务到调度器, 触发时以固定 TaskID 入队。
 // 重复添加同名任务定为更新; spec 由 Scheduler.Register 校验(asynq 仅支持 5 段表达式)。
-func (s *DbStrategy) AddCronTask(spec, taskType, funName string, p *Payload) {
+// 注册失败时返回 error, 供运行期切换(online)调用方回滚状态。
+func (s *DbStrategy) AddCronTask(spec, taskType, funName string, p *Payload) error {
 	s.Logger.Info(logPre + fmt.Sprintf(
 		"注册任务 %s(%s)", funName, spec,
 	))
 	b, err := json.Marshal(p)
 	if err != nil {
 		s.Logger.Error(logPre + fmt.Sprintf("序列化任务%s负载失败, err=%s", funName, err.Error()))
-		return
+		return err
 	}
 	task := asynq.NewTask(taskType, b)
 	opts := []asynq.Option{
@@ -192,7 +198,7 @@ func (s *DbStrategy) AddCronTask(spec, taskType, funName string, p *Payload) {
 	defer s.mu.Unlock()
 	if s.sched == nil {
 		s.Logger.Error(logPre + "scheduler 未初始化, 无法注册任务 " + funName)
-		return
+		return errors.New("scheduler 未初始化, 无法注册任务 " + funName)
 	}
 	// 重复添加任务定为更新: 先注销旧注册项
 	if eid, ok := s.entries[funName]; ok {
@@ -204,9 +210,27 @@ func (s *DbStrategy) AddCronTask(spec, taskType, funName string, p *Payload) {
 	eid, err := s.sched.Register(spec, task, opts...)
 	if err != nil {
 		s.Logger.Error(logPre + fmt.Sprintf("%s 注册定时任务%s失败, err=%s", conf.HostName(), funName, err.Error()))
-		return
+		return err
 	}
 	s.entries[funName] = eid
+	return nil
+}
+
+// RemoveCronTask 按任务名从调度器注销策略任务注册项(策略切换为 offline 时调用),
+// 仅撤销后续调度, 已入队待执行任务不回收(与 jobs 周期任务停用语义一致)
+func (s *DbStrategy) RemoveCronTask(funName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	eid, ok := s.entries[funName]
+	if !ok {
+		return
+	}
+	if err := s.sched.Unregister(eid); err != nil {
+		s.Logger.Error(logPre + fmt.Sprintf("注销任务%s注册项失败, err=%s", funName, err.Error()))
+		return
+	}
+	delete(s.entries, funName)
+	s.Logger.Info(logPre + fmt.Sprintf("注销任务 %s 成功", funName))
 }
 
 // Shutdown 停止调度器并释放客户端

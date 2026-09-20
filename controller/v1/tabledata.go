@@ -1,6 +1,7 @@
 package v1
 
 import (
+	dbstrategy "cron-job/internal/db_strategy"
 	"cron-job/middleware/resp"
 	"cron-job/models/dao"
 	"cron-job/models/dao/rds"
@@ -28,6 +29,9 @@ func (Tabledata) TtlList(c *gin.Context) {
 	if p.Tablename != "" {
 		q = q.Where("table_name LIKE ?", "%"+p.Tablename+"%")
 	}
+	if p.Status != "" {
+		q = q.Where("status = ?", p.Status)
+	}
 	q = q.Order("id DESC")
 
 	pg := resp.NewPage(c)
@@ -48,7 +52,7 @@ func (Tabledata) TtlList(c *gin.Context) {
 	resp.Paginate(c, pg, list)
 }
 
-// TtlAdd 新建 TTL 策略配置
+// TtlAdd 新建 TTL 策略配置(状态默认 offline, 不自动注册 asynq, 上线走 toggle 接口)
 func (Tabledata) TtlAdd(c *gin.Context) {
 	p := valid.TtlAdd{}
 	if err := valid.BindJsonAndCheck(c, &p); err != nil {
@@ -69,6 +73,7 @@ func (Tabledata) TtlAdd(c *gin.Context) {
 		TtlValue:   p.TtlValue,
 		Limit:      p.Limit,
 		Spec:       p.Spec,
+		Status:     rds.StrategyOffline,
 		Desc:       p.Desc,
 	}
 	if err := dao.MysqlCli.Create(&cfg).Error; err != nil {
@@ -96,7 +101,7 @@ func (Tabledata) TtlDetail(c *gin.Context) {
 	resp.Succ(c, cfg)
 }
 
-// TtlUpdate 更新 TTL 策略配置(只更新提交的字段, unkey 不可变更)
+// TtlUpdate 更新 TTL 策略配置(仅 offline 状态可更新, 只更新提交的字段, unkey 不可变更)
 func (Tabledata) TtlUpdate(c *gin.Context) {
 	p := valid.TtlUpdate{}
 	err := valid.BindJsonAndCheck(c, &p)
@@ -108,6 +113,10 @@ func (Tabledata) TtlUpdate(c *gin.Context) {
 	cfg, err = cfg.GetByID(p.ID)
 	if err != nil {
 		resp.Fail(c, err)
+		return
+	}
+	if cfg.Status == rds.StrategyOnline {
+		resp.Fail(c, resp.ParamInValid("online 状态的策略不可编辑, 请先退回 offline"))
 		return
 	}
 	updates := map[string]interface{}{}
@@ -147,7 +156,7 @@ func (Tabledata) TtlUpdate(c *gin.Context) {
 	resp.Succ(c, cfg)
 }
 
-// TtlDelete 删除 TTL 策略配置
+// TtlDelete 删除 TTL 策略配置(仅 offline 状态可删除)
 func (Tabledata) TtlDelete(c *gin.Context) {
 	p := struct {
 		ID int64 `json:"id" binding:"required"`
@@ -163,10 +172,60 @@ func (Tabledata) TtlDelete(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	if cfg.Status == rds.StrategyOnline {
+		resp.Fail(c, resp.ParamInValid("online 状态的策略不可删除, 请先退回 offline"))
+		return
+	}
 	if err = dao.MysqlCli.Delete(cfg).Error; err != nil {
 		resp.Fail(c, err)
 		return
 	}
+	resp.Succ(c, cfg)
+}
+
+// TtlToggle 切换 TTL 策略状态(offline->online 注册到 asynq 调度, online->offline 撤销调度)
+func (Tabledata) TtlToggle(c *gin.Context) {
+	p := valid.TtlToggle{}
+	err := valid.BindJsonAndCheck(c, &p)
+	if err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	var cfg *rds.TabledataTtl
+	cfg, err = cfg.GetByID(p.ID)
+	if err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	if cfg.Status == p.Status {
+		resp.Succ(c, cfg)
+		return
+	}
+	funName := "ttl:" + cfg.UnKey
+	stg := dbstrategy.Instance()
+	if p.Status == rds.StrategyOnline { // 上线: 先注册调度, 再落库状态
+		if err = valid.CheckCronExpr(cfg.Spec); err != nil {
+			resp.Fail(c, resp.ParamInValid(err.Error()))
+			return
+		}
+		payload := &dbstrategy.Payload{Kind: dbstrategy.KindTtl, ID: cfg.ID}
+		if err = stg.AddCronTask(cfg.Spec, dbstrategy.TypeTtlStrategy, funName, payload); err != nil {
+			resp.Fail(c, resp.ParamInValid("策略注册失败", err.Error()))
+			return
+		}
+		if err = cfg.SetStatus(cfg.ID, p.Status); err != nil {
+			stg.RemoveCronTask(funName) // 落库失败回滚注册
+			resp.Fail(c, err)
+			return
+		}
+	} else { // 下线: 先落库状态, 再撤销调度
+		if err = cfg.SetStatus(cfg.ID, p.Status); err != nil {
+			resp.Fail(c, err)
+			return
+		}
+		stg.RemoveCronTask(funName)
+	}
+	cfg, _ = cfg.GetByID(p.ID)
 	resp.Succ(c, cfg)
 }
 
@@ -186,6 +245,9 @@ func (Tabledata) RetryList(c *gin.Context) {
 	}
 	if p.Tablename != "" {
 		q = q.Where("table_name LIKE ?", "%"+p.Tablename+"%")
+	}
+	if p.Status != "" {
+		q = q.Where("status = ?", p.Status)
 	}
 	q = q.Order("id DESC")
 
@@ -207,7 +269,7 @@ func (Tabledata) RetryList(c *gin.Context) {
 	resp.Paginate(c, pg, list)
 }
 
-// RetryAdd 新建 Retry 策略配置
+// RetryAdd 新建 Retry 策略配置(状态默认 offline, 不自动注册 asynq, 上线走 toggle 接口)
 func (Tabledata) RetryAdd(c *gin.Context) {
 	p := valid.RetryAdd{}
 	if err := valid.BindJsonAndCheck(c, &p); err != nil {
@@ -231,6 +293,7 @@ func (Tabledata) RetryAdd(c *gin.Context) {
 		Duration:   p.Duration,
 		Limit:      p.Limit,
 		Spec:       p.Spec,
+		Status:     rds.StrategyOffline,
 		Desc:       p.Desc,
 	}
 	if err := dao.MysqlCli.Create(&cfg).Error; err != nil {
@@ -259,7 +322,7 @@ func (Tabledata) RetryDetail(c *gin.Context) {
 	resp.Succ(c, cfg)
 }
 
-// RetryUpdate 更新 Retry 策略配置(只更新提交的字段, unkey 不可变更)
+// RetryUpdate 更新 Retry 策略配置(仅 offline 状态可更新, 只更新提交的字段, unkey 不可变更)
 func (Tabledata) RetryUpdate(c *gin.Context) {
 	p := valid.RetryUpdate{}
 	err := valid.BindJsonAndCheck(c, &p)
@@ -271,6 +334,10 @@ func (Tabledata) RetryUpdate(c *gin.Context) {
 	cfg, err = cfg.GetByID(p.ID)
 	if err != nil {
 		resp.Fail(c, err)
+		return
+	}
+	if cfg.Status == rds.StrategyOnline {
+		resp.Fail(c, resp.ParamInValid("online 状态的策略不可编辑, 请先退回 offline"))
 		return
 	}
 	updates := map[string]interface{}{}
@@ -317,7 +384,7 @@ func (Tabledata) RetryUpdate(c *gin.Context) {
 	resp.Succ(c, cfg)
 }
 
-// RetryDelete 删除 Retry 策略配置
+// RetryDelete 删除 Retry 策略配置(仅 offline 状态可删除)
 func (Tabledata) RetryDelete(c *gin.Context) {
 	p := struct {
 		ID int64 `json:"id" binding:"required"`
@@ -333,10 +400,60 @@ func (Tabledata) RetryDelete(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	if cfg.Status == rds.StrategyOnline {
+		resp.Fail(c, resp.ParamInValid("online 状态的策略不可删除, 请先退回 offline"))
+		return
+	}
 	if err = dao.MysqlCli.Delete(cfg).Error; err != nil {
 		resp.Fail(c, err)
 		return
 	}
+	resp.Succ(c, cfg)
+}
+
+// RetryToggle 切换 Retry 策略状态(offline->online 注册到 asynq 调度, online->offline 撤销调度)
+func (Tabledata) RetryToggle(c *gin.Context) {
+	p := valid.RetryToggle{}
+	err := valid.BindJsonAndCheck(c, &p)
+	if err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	var cfg *rds.TabledataRetry
+	cfg, err = cfg.GetByID(p.ID)
+	if err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	if cfg.Status == p.Status {
+		resp.Succ(c, cfg)
+		return
+	}
+	funName := "retry:" + cfg.Unkey
+	stg := dbstrategy.Instance()
+	if p.Status == rds.StrategyOnline { // 上线: 先注册调度, 再落库状态
+		if err = valid.CheckCronExpr(cfg.Spec); err != nil {
+			resp.Fail(c, resp.ParamInValid(err.Error()))
+			return
+		}
+		payload := &dbstrategy.Payload{Kind: dbstrategy.KindRetry, ID: cfg.ID}
+		if err = stg.AddCronTask(cfg.Spec, dbstrategy.TypeRetryStrategy, funName, payload); err != nil {
+			resp.Fail(c, resp.ParamInValid("策略注册失败", err.Error()))
+			return
+		}
+		if err = cfg.SetStatus(cfg.ID, p.Status); err != nil {
+			stg.RemoveCronTask(funName) // 落库失败回滚注册
+			resp.Fail(c, err)
+			return
+		}
+	} else { // 下线: 先落库状态, 再撤销调度
+		if err = cfg.SetStatus(cfg.ID, p.Status); err != nil {
+			resp.Fail(c, err)
+			return
+		}
+		stg.RemoveCronTask(funName)
+	}
+	cfg, _ = cfg.GetByID(p.ID)
 	resp.Succ(c, cfg)
 }
 

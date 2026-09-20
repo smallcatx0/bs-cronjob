@@ -9,9 +9,10 @@ type TtlQuery struct {
 	UnKey     string `form:"unkey" binding:"omitempty,max=128"`
 	DbName    string `form:"db_name" binding:"omitempty,max=64"`
 	Tablename string `form:"table_name" binding:"omitempty,max=128"`
+	Status    string `form:"status" binding:"omitempty,oneof=offline online"`
 }
 
-// TtlAdd 新增 TTL 策略配置
+// TtlAdd 新增 TTL 策略配置(状态固定为 offline 不可传入, 上线需单独调用 toggle 接口)
 type TtlAdd struct {
 	UnKey      string `json:"unkey" binding:"required,max=128"`
 	Dsn        string `json:"dsn" binding:"required"`
@@ -29,7 +30,7 @@ func (p *TtlAdd) Valid() error {
 	return checkSpec(p.Spec)
 }
 
-// TtlUpdate 更新 TTL 策略配置(unkey 为调度任务名组成部分, 不可更新)
+// TtlUpdate 更新 TTL 策略配置(unkey 为调度任务名组成部分, 不可更新; 仅 offline 状态可更新, 状态切换走 toggle)
 type TtlUpdate struct {
 	ID         int64  `json:"id" binding:"required"`
 	Dsn        string `json:"dsn" binding:"omitempty"`
@@ -42,14 +43,21 @@ type TtlUpdate struct {
 	Desc       string `json:"desc" binding:"omitempty,max=255"`
 }
 
+// TtlToggle TTL 策略状态切换(online=注册 asynq 调度, offline=撤销调度)
+type TtlToggle struct {
+	ID     int64  `json:"id" binding:"required"`
+	Status string `json:"status" binding:"required,oneof=offline online"` // offline/online
+}
+
 // RetryQuery tabledata_retry 列表查询条件
 type RetryQuery struct {
 	Unkey     string `form:"unkey" binding:"omitempty,max=128"`
 	DbName    string `form:"db_name" binding:"omitempty,max=64"`
 	Tablename string `form:"table_name" binding:"omitempty,max=128"`
+	Status    string `form:"status" binding:"omitempty,oneof=offline online"`
 }
 
-// RetryAdd 新增 Retry 策略配置
+// RetryAdd 新增 Retry 策略配置(状态固定为 offline 不可传入, 上线需单独调用 toggle 接口)
 type RetryAdd struct {
 	Unkey      string `json:"unkey" binding:"required,max=128"`
 	Dsn        string `json:"dsn" binding:"required"`
@@ -70,7 +78,7 @@ func (p *RetryAdd) Valid() error {
 	return checkSpec(p.Spec)
 }
 
-// RetryUpdate 更新 Retry 策略配置(unkey 为调度任务名组成部分, 不可更新)
+// RetryUpdate 更新 Retry 策略配置(unkey 为调度任务名组成部分, 不可更新; 仅 offline 状态可更新, 状态切换走 toggle)
 type RetryUpdate struct {
 	ID         int64  `json:"id" binding:"required"`
 	Dsn        string `json:"dsn" binding:"omitempty"`
@@ -84,6 +92,12 @@ type RetryUpdate struct {
 	Duration   int64  `json:"duration" binding:"omitempty,min=1"`
 	Limit      int64  `json:"limit" binding:"omitempty,min=1"`
 	Desc       string `json:"desc" binding:"omitempty,max=255"`
+}
+
+// RetryToggle Retry 策略状态切换(online=注册 asynq 调度, offline=撤销调度)
+type RetryToggle struct {
+	ID     int64  `json:"id" binding:"required"`
+	Status string `json:"status" binding:"required,oneof=offline online"` // offline/online
 }
 
 // checkSpec 校验 cron 表达式, 与调度器保持一致: 仅标准 5 段(分 时 日 月 周)及 @every 等描述符
