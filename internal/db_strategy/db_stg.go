@@ -190,7 +190,7 @@ func (s *DbStrategy) AddCronTask(spec, taskType, funName string, p *Payload) err
 	}
 	task := asynq.NewTask(taskType, b)
 	opts := []asynq.Option{
-		asynq.Queue(tasks.Queue()),
+		asynq.Queue(tasks.StrategyQueue()), // 策略任务走独立队列, 与业务 job:exec 隔离, worker 可拆分消费
 		asynq.MaxRetry(0),
 		asynq.TaskID("dbstrategy:" + funName), // 固定 TaskID, 同秒重复触发自动去重
 	}

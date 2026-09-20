@@ -1,11 +1,17 @@
 # 基础配置
-app_name: "示例项目"
-desc: "这是示例项目"
+app_name: "定时任务管理平台"
+desc: "定时任务管理平台"
 debug: true # gin debug开关
-metrics: true # 是否开启系统监控
-metrics_dt: 10 # 系统监控间隔
 env: dev # 可选 dev test pre prod
-http_port: 8081
+http_port: 8083
+
+metrics: false # 是否开启系统监控
+metrics_dt: 10 # 系统监控间隔
+
+# asynq 调度引擎(复用主redis)
+asynq:
+  queue: cron_job # 业务 job:exec 队列(与 worker.yaml 保持一致)
+  strategy_queue: dbstrategy # db_strategy 策略任务(ttl/retry)队列(与 worker.yaml 保持一致)
 
 # 主数据库
 mysql:
@@ -32,3 +38,4 @@ log:
   max_size: 32
   max_age: 30
   max_backups: 300
+

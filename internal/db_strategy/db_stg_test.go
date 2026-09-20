@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"cron-job/internal/tasks"
 	"cron-job/models/dao"
 
 	"github.com/hibiken/asynq"
@@ -97,6 +98,7 @@ func Test_cronFun(t *testing.T) {
 	assert.NoError(t, err)
 	_, err = stg.client.EnqueueContext(context.Background(),
 		asynq.NewTask(TypeTtlStrategy, b),
+		asynq.Queue(tasks.StrategyQueue()),
 		asynq.TaskID("dbstrategy:ttl:"+p.UnKey),
 	)
 	assert.NoError(t, err)

@@ -185,7 +185,10 @@ func (Tabledata) TtlDelete(c *gin.Context) {
 
 // TtlToggle 切换 TTL 策略状态(offline->online 注册到 asynq 调度, online->offline 撤销调度)
 func (Tabledata) TtlToggle(c *gin.Context) {
-	p := valid.TtlToggle{}
+	p := struct {
+		ID     int64  `json:"id" binding:"required"`
+		Status string `json:"status" binding:"required,oneof=offline online"` // offline/online
+	}{}
 	err := valid.BindJsonAndCheck(c, &p)
 	if err != nil {
 		resp.Fail(c, err)
@@ -375,7 +378,11 @@ func (Tabledata) RetryUpdate(c *gin.Context) {
 		updates["desc"] = p.Desc
 	}
 	if len(updates) > 0 {
-		if err = dao.MysqlCli.Model(&rds.TabledataRetry{}).Where("id = ?", cfg.ID).Updates(updates).Error; err != nil {
+		err = dao.MysqlCli.
+			Model(&rds.TabledataRetry{}).
+			Where("id = ?", cfg.ID).
+			Updates(updates).Error
+		if err != nil {
 			resp.Fail(c, err)
 			return
 		}
@@ -413,7 +420,10 @@ func (Tabledata) RetryDelete(c *gin.Context) {
 
 // RetryToggle 切换 Retry 策略状态(offline->online 注册到 asynq 调度, online->offline 撤销调度)
 func (Tabledata) RetryToggle(c *gin.Context) {
-	p := valid.RetryToggle{}
+	p := struct {
+		ID     int64  `json:"id" binding:"required"`
+		Status string `json:"status" binding:"required,oneof=offline online"` // offline/online
+	}{}
 	err := valid.BindJsonAndCheck(c, &p)
 	if err != nil {
 		resp.Fail(c, err)

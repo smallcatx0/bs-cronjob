@@ -7,8 +7,11 @@ metrics_dt: 10 # 系统监控间隔
 
 # asynq 消费端(复用主redis)
 asynq:
-  queue: default
+  queue: default # 业务 job:exec 队列
+  strategy_queue: dbstrategy # db_strategy 策略任务(ttl/retry)队列
   concurrency: 10
+  # queues: [default, dbstrategy] # 消费监听队列, 按先后顺序降权; 不填则默认两队列且业务优先
+  # 拆分 worker 时只填其一即可, 如只消费策略: queues: [dbstrategy]
 
 # shell 任务白名单(脚本或可执行程序, 基名或全路径)
 shell:

@@ -4,6 +4,14 @@ import (
 	"cron-job/middleware/resp"
 )
 
+// checkSpec 校验 cron 表达式, 与调度器保持一致: 仅标准 5 段(分 时 日 月 周)及 @every 等描述符
+func checkSpec(spec string) error {
+	if err := CheckCronExpr(spec); err != nil {
+		return resp.ParamInValid(err.Error())
+	}
+	return nil
+}
+
 // TtlQuery tabledata_ttl 列表查询条件
 type TtlQuery struct {
 	UnKey     string `form:"unkey" binding:"omitempty,max=128"`
@@ -41,12 +49,6 @@ type TtlUpdate struct {
 	TtlValue   int64  `json:"ttl_value" binding:"omitempty,min=1"`
 	Limit      int64  `json:"limit" binding:"omitempty,min=1"`
 	Desc       string `json:"desc" binding:"omitempty,max=255"`
-}
-
-// TtlToggle TTL 策略状态切换(online=注册 asynq 调度, offline=撤销调度)
-type TtlToggle struct {
-	ID     int64  `json:"id" binding:"required"`
-	Status string `json:"status" binding:"required,oneof=offline online"` // offline/online
 }
 
 // RetryQuery tabledata_retry 列表查询条件
@@ -92,18 +94,4 @@ type RetryUpdate struct {
 	Duration   int64  `json:"duration" binding:"omitempty,min=1"`
 	Limit      int64  `json:"limit" binding:"omitempty,min=1"`
 	Desc       string `json:"desc" binding:"omitempty,max=255"`
-}
-
-// RetryToggle Retry 策略状态切换(online=注册 asynq 调度, offline=撤销调度)
-type RetryToggle struct {
-	ID     int64  `json:"id" binding:"required"`
-	Status string `json:"status" binding:"required,oneof=offline online"` // offline/online
-}
-
-// checkSpec 校验 cron 表达式, 与调度器保持一致: 仅标准 5 段(分 时 日 月 周)及 @every 等描述符
-func checkSpec(spec string) error {
-	if err := CheckCronExpr(spec); err != nil {
-		return resp.ParamInValid(err.Error())
-	}
-	return nil
 }

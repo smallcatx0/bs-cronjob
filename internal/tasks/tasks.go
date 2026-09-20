@@ -63,13 +63,42 @@ func init() {
 	mux = asynq.NewServeMux()
 }
 
-// Queue 队列名
+// Queue 队列名(job:exec 业务任务)
 func Queue() string {
 	q := conf.AppConf.GetString("asynq.queue")
 	if q == "" {
 		q = "default"
 	}
 	return q
+}
+
+// StrategyQueue db_strategy 策略任务(ttl/retry 共用)队列名, 与业务队列隔离,
+// 供消费端按队列拆分 worker 独立处理 job:exec 与 dbstrategy
+func StrategyQueue() string {
+	q := conf.AppConf.GetString("asynq.strategy_queue")
+	if q == "" {
+		q = "dbstrategy"
+	}
+	return q
+}
+
+// consumeQueues 消费端监听队列及优先级: asynq.queues 按先后顺序降权(数字越大优先级越高),
+// 未配置则默认业务队列优先于策略队列; 拆分 worker 时配置只填对应队列即可
+func consumeQueues() map[string]int {
+	qs := conf.AppConf.GetStringSlice("asynq.queues")
+	if len(qs) == 0 {
+		qs = []string{Queue(), StrategyQueue()}
+	}
+	queues := make(map[string]int, len(qs))
+	for i, q := range qs {
+		if q == "" {
+			continue
+		}
+		if _, ok := queues[q]; !ok {
+			queues[q] = len(qs) - i
+		}
+	}
+	return queues
 }
 
 // RedisOpt 读取配置中的 asynq redis 连接参数(供其他包复用, 如 db_strategy 调度器)
@@ -108,8 +137,10 @@ func ConsumerClient() {
 	if concurrency <= 0 {
 		concurrency = 10
 	}
+	queues := consumeQueues()
 	server = asynq.NewServer(RedisOpt(), asynq.Config{
 		Concurrency: concurrency,
+		Queues:      queues,
 		Logger:      &zapLogger{s: glog.Z().Sugar()},
 	})
 	go func() {
@@ -117,7 +148,7 @@ func ConsumerClient() {
 			glog.Z().Error("[tasks] asynq server exit: " + err.Error())
 		}
 	}()
-	glog.Z().Info("[tasks] asynq consumer started, queue=" + Queue())
+	glog.Z().Info(fmt.Sprintf("[tasks] asynq consumer started, queues=%v", queues))
 }
 
 // Shutdown 优雅退出

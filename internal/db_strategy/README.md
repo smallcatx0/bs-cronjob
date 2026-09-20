@@ -24,8 +24,10 @@ bootstrap.InitDbStrategyProducer             bootstrap.InitDbStrategyConsumer + 
       ├─ 读取 tabledata_ttl / tabledata_retry       ↓
       ├─ Scheduler.Register(spec, task)      asynq Server 领取任务
       └─ sched.Run() 按 cron 入队 ──────────▶  Handle(): 按 Kind+ID 查配置库 -> 竞争
-         (队列 tasks.Queue())          Redis 锁 -> 分发到 deleteTableRecord / updateTableRecord
+     (队列 tasks.StrategyQueue())      Redis 锁 -> 分发到 deleteTableRecord / updateTableRecord
 ```
+
+- 策略任务使用独立队列 `asynq.strategy_queue`(默认 `dbstrategy`), 与业务 `job:exec` 队列隔离, worker 可通过 `asynq.queues` 配置拆分消费
 
 - 任务负载 `Payload{Kind, ID}` 仅携带策略主键，消费端按 `Kind+ID` 回查配置库获取**执行时最新**配置（运行期改配置立即生效，无需重建调度器中的 payload）
 - 代价：worker 消费端必须能访问配置库（已在 `InitInstance` 传入 `dao.MysqlCli`），且每次执行前多一次主键查询
