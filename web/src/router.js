@@ -20,11 +20,6 @@ const routes = [
         component: () => import('~/views/JobsView.vue'),
       },
       {
-        path: '/admin/logs',
-        name: 'logs',
-        component: () => import('~/views/LogsView.vue'),
-      },
-      {
         path: '/admin/ttl',
         name: 'ttl',
         component: () => import('~/views/TtlView.vue'),
@@ -33,11 +28,6 @@ const routes = [
         path: '/admin/retry',
         name: 'retry',
         component: () => import('~/views/RetryView.vue'),
-      },
-      {
-        path: '/admin/strategy-logs',
-        name: 'strategy-logs',
-        component: () => import('~/views/StrategyLogsView.vue'),
       },
     ],
   },

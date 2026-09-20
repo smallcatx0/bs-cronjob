@@ -2,4 +2,3 @@ go.sum
 *.exe
 **/logs/*.log
 **/var_test.go
-web-参考/**

@@ -65,7 +65,7 @@ func init() {
 
 // Queue 队列名(job:exec 业务任务)
 func Queue() string {
-	q := conf.AppConf.GetString("asynq.queue")
+	q := conf.AppConf.GetString("asynq.job_queue")
 	if q == "" {
 		q = "default"
 	}

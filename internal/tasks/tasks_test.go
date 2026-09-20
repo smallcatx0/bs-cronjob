@@ -45,7 +45,7 @@ func TestQueue(t *testing.T) {
 	if got := Queue(); got != "default" {
 		t.Fatalf("Queue() default = %q, want %q", got, "default")
 	}
-	conf.AppConf.Set("asynq.queue", "myqueue")
+	conf.AppConf.Set("asynq.job_queue", "myqueue")
 	if got := Queue(); got != "myqueue" {
 		t.Fatalf("Queue() = %q, want %q", got, "myqueue")
 	}

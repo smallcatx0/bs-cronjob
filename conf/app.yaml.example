@@ -10,7 +10,7 @@ metrics_dt: 10 # 系统监控间隔
 
 # asynq 调度引擎(复用主redis)
 asynq:
-  queue: cron_job # 业务 job:exec 队列(与 worker.yaml 保持一致)
+  job_queue: cron_job # 业务 job:exec 队列(与 worker.yaml 保持一致)
   strategy_queue: dbstrategy # db_strategy 策略任务(ttl/retry)队列(与 worker.yaml 保持一致)
 
 # 主数据库

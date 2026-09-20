@@ -26,19 +26,24 @@
 
     <!-- 策略表格 -->
     <el-table :data="rows" v-loading="loading" border stripe size="small">
-      <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column prop="unkey" label="Unkey" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="desc" label="描述" min-width="120" show-overflow-tooltip />
-      <el-table-column prop="db_name" label="库名" min-width="110" show-overflow-tooltip />
-      <el-table-column prop="table_name" label="表名" min-width="130" show-overflow-tooltip />
+      <el-table-column prop="id" label="#" width="60" />
+      <el-table-column prop="unkey" label="名称" min-width="120" show-overflow-tooltip />
+      <el-table-column prop="desc" label="描述" min-width="140" show-overflow-tooltip />
+      <el-table-column prop="spec" label="调度规则" min-width="110" show-overflow-tooltip />
+      <el-table-column label="库表" min-width="160" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.db_name ? row.db_name + '.' + row.table_name : row.table_name }}</template>
+      </el-table-column>
       <el-table-column label="依据字段" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ row.column_name }} ({{ row.column_type }})</template>
       </el-table-column>
-      <el-table-column label="TTL(秒)" width="100">
-        <template #default="{ row }">{{ row.ttl_value }}</template>
+      <el-table-column label="TTL" width="130">
+        <template #default="{ row }">
+          <el-tooltip :content="`${row.ttl_value} 秒`" placement="top">
+            <span>{{ fmtTtl(row.ttl_value) }}</span>
+          </el-tooltip>
+        </template>
       </el-table-column>
       <el-table-column prop="limit" label="批次" width="80" />
-      <el-table-column prop="spec" label="调度规则" min-width="110" show-overflow-tooltip />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="row.status === 'online' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
@@ -171,6 +176,8 @@ const query = reactive({ unkey: '', db_name: '', table_name: '', status: '' })
 
 const editVisible = ref(false)
 const form = reactive({ id: null, unkey: '', dsn: '', db_name: '', table_name: '', column_name: '', column_type: 'datetime', ttl_value: 3600, limit: 1000, spec: '', desc: '' })
+// 记录编辑时后端返回的脱敏 dsn, 用于判断用户是否修改了该字段
+const originalDsn = ref('')
 
 // 执行日志弹窗
 const logsVisible = ref(false)
@@ -189,12 +196,35 @@ const fmtCost = (row) => {
   return ms >= 0 ? ms + 'ms' : '-'
 }
 
+// 将秒数格式化为更易读的时长(天/小时/分钟/秒), 最多保留两个非零单位
+const fmtTtl = (s) => {
+  const n = Number(s)
+  if (!n || n <= 0) return '-'
+  const units = [
+    { label: '天', sec: 86400 },
+    { label: '小时', sec: 3600 },
+    { label: '分钟', sec: 60 },
+    { label: '秒', sec: 1 },
+  ]
+  let rest = n
+  const parts = []
+  for (const u of units) {
+    const v = Math.floor(rest / u.sec)
+    if (v > 0) {
+      parts.push(`${v}${u.label}`)
+      rest -= v * u.sec
+    }
+    if (parts.length === 2) break
+  }
+  return parts.join('') || `${n}秒`
+}
+
 // cron 快捷输入(与 asynq 一致的标准 5 段: 分 时 日 月 周)
 const quickCrons = [
-  { label: '每分钟', expr: '* * * * *' },
-  { label: '两分钟', expr: '*/2 * * * *' },
   { label: '五分钟', expr: '*/5 * * * *' },
   { label: '半小时', expr: '*/30 * * * *' },
+  { label: '一小时', expr: '0 * * * *' },
+  { label: '每天', expr: '0 0 * * *' },
 ]
 
 async function load(p) {
@@ -215,6 +245,7 @@ function openEdit(row) {
   Object.assign(form, row
     ? { id: row.id, unkey: row.unkey, dsn: row.dsn, db_name: row.db_name, table_name: row.table_name, column_name: row.column_name, column_type: row.column_type, ttl_value: row.ttl_value, limit: row.limit, spec: row.spec, desc: row.desc || '' }
     : { id: null, unkey: '', dsn: '', db_name: '', table_name: '', column_name: '', column_type: 'datetime', ttl_value: 3600, limit: 1000, spec: '', desc: '' })
+  originalDsn.value = row ? row.dsn : ''
   editVisible.value = true
 }
 
@@ -223,9 +254,8 @@ async function doSave() {
   try {
     if (form.id) {
       // 后端仅支持更新这些字段, unkey/spec 不可变更
-      await updateTtl({
+      const payload = {
         id: form.id,
-        dsn: form.dsn,
         db_name: form.db_name,
         table_name: form.table_name,
         column_name: form.column_name,
@@ -233,7 +263,12 @@ async function doSave() {
         ttl_value: form.ttl_value,
         limit: form.limit,
         desc: form.desc,
-      })
+      }
+      // dsn 后端已脱敏, 仅在用户真实修改时才提交, 避免把脱敏串写回
+      if (form.dsn !== originalDsn.value) {
+        payload.dsn = form.dsn
+      }
+      await updateTtl(payload)
     } else {
       await addTtl({
         unkey: form.unkey,

@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS `bs_tabledata_ttl` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='TTL策略配置';
 
 -- TTL/Retry 策略执行日志表
-CREATE TABLE IF NOT EXISTS `bs_tabledata_strategy_log` (
+CREATE TABLE IF NOT EXISTS `bs_dbstrategy_log` (
   `id` BIGINT NOT NULL AUTO_INCREMENT,
   `kind` VARCHAR(16) NOT NULL DEFAULT '' COMMENT '策略类型 ttl/retry',
   `strategy_id` BIGINT NOT NULL DEFAULT 0 COMMENT '策略配置行主键',

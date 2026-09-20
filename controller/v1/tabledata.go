@@ -49,6 +49,9 @@ func (Tabledata) TtlList(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	for i := range list {
+		list[i].Dsn = dao.DsnMask(list[i].Dsn)
+	}
 	resp.Paginate(c, pg, list)
 }
 
@@ -80,6 +83,7 @@ func (Tabledata) TtlAdd(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -97,7 +101,7 @@ func (Tabledata) TtlDetail(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
-
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -153,6 +157,7 @@ func (Tabledata) TtlUpdate(c *gin.Context) {
 		}
 	}
 	cfg, _ = cfg.GetByID(p.ID)
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -180,6 +185,7 @@ func (Tabledata) TtlDelete(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -229,6 +235,7 @@ func (Tabledata) TtlToggle(c *gin.Context) {
 		stg.RemoveCronTask(funName)
 	}
 	cfg, _ = cfg.GetByID(p.ID)
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -269,6 +276,9 @@ func (Tabledata) RetryList(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	for i := range list {
+		list[i].Dsn = dao.DsnMask(list[i].Dsn)
+	}
 	resp.Paginate(c, pg, list)
 }
 
@@ -303,6 +313,7 @@ func (Tabledata) RetryAdd(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -322,6 +333,7 @@ func (Tabledata) RetryDetail(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -388,6 +400,7 @@ func (Tabledata) RetryUpdate(c *gin.Context) {
 		}
 	}
 	cfg, _ = cfg.GetByID(p.ID)
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -415,6 +428,7 @@ func (Tabledata) RetryDelete(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 
@@ -464,6 +478,7 @@ func (Tabledata) RetryToggle(c *gin.Context) {
 		stg.RemoveCronTask(funName)
 	}
 	cfg, _ = cfg.GetByID(p.ID)
+	cfg.Dsn = dao.DsnMask(cfg.Dsn)
 	resp.Succ(c, cfg)
 }
 

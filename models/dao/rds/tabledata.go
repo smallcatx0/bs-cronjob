@@ -116,7 +116,7 @@ type TabledataStrategyLog struct {
 	CreatedAt    time.Time  `gorm:"column:created_at" json:"created_at"`
 }
 
-func (TabledataStrategyLog) TableName() string { return "bs_tabledata_strategy_log" }
+func (TabledataStrategyLog) TableName() string { return "bs_dbstrategy_log" }
 
 // StartStrategyLog 策略开始执行,写 running 日志(参照 StartJobLog)
 func StartStrategyLog(kind string, id int64, name string) *TabledataStrategyLog {

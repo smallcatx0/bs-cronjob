@@ -8,11 +8,6 @@ export const authMenu = [
     icon: Timer,
   },
   {
-    label: '运行记录',
-    path: '/admin/logs',
-    icon: Document,
-  },
-  {
     label: 'TTL策略',
     path: '/admin/ttl',
     icon: Document,
@@ -21,10 +16,5 @@ export const authMenu = [
     label: 'Retry策略',
     path: '/admin/retry',
     icon: Document,
-  },
-  {
-    label: '策略日志',
-    path: '/admin/strategy-logs',
-    icon: DataAnalysis,
   },
 ]
