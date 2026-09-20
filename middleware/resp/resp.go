@@ -48,7 +48,7 @@ func Response(c *gin.Context, err error) {
 			b.Msg = "服务错误"
 		}
 	}
-	b.RequestID = c.GetHeader(RequestIDKey)
+	b.RequestID = c.GetString(RequestIDKey)
 	c.JSON(httpCode, &b)
 }
 
