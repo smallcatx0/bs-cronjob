@@ -134,19 +134,18 @@ func (t *TabledataTtl) SetStatus(id int64, status string) error {
 
 // BuildTtlDeleteSql 根据 TTL 配置生成删除 SQL, 执行端与预览端共用,
 // cutoff 为过期界限时间由调用方传入以便单测; column_type 非法时返回 error
-// 注意: 保持现有 SQL 格式, 表名/列名不加反引号(与线上执行语句一致)
 func BuildTtlDeleteSql(tablename, columnName, columnType string, cutoff time.Time, limit int64) (string, error) {
 	var where string
 	switch columnType {
 	case ColumType_Unix:
-		where = fmt.Sprintf("%s < %d", columnName, cutoff.Unix())
+		where = fmt.Sprintf("`%s` < %d", columnName, cutoff.Unix())
 	case ColumType_Timestamp, ColumType_Datetime:
-		where = fmt.Sprintf("%s < '%s'", columnName, cutoff.Format("2006-01-02 15:04:05"))
+		where = fmt.Sprintf("`%s` < '%s'", columnName, cutoff.Format("2006-01-02 15:04:05"))
 	default:
 		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
 			columnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
 	}
-	return fmt.Sprintf("DELETE FROM %s WHERE %s LIMIT %d", tablename, where, limit), nil
+	return fmt.Sprintf("DELETE FROM `%s` WHERE %s LIMIT %d", tablename, where, limit), nil
 }
 
 // ParseSql 根据 TTL 策略配置生成实际执行的删除 SQL, 供前端预览即将执行的语句;
