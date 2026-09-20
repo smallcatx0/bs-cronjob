@@ -33,30 +33,28 @@
 
     <!-- 任务表格 -->
     <el-table :data="rows" v-loading="loading" border stripe size="small">
-      <el-table-column prop="id" label="ID" width="60" />
-      <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="type" label="类型" width="80">
-        <template #default="{ row }"><el-tag size="small">{{ row.type }}</el-tag></template>
-      </el-table-column>
-      <el-table-column prop="schedule_type" label="调度" width="70" />
-      <el-table-column label="调度规则" min-width="80" show-overflow-tooltip>
-        <template #default="{ row }">
-          <span v-if="row.schedule_type === 'cron'">{{ row.cron_expr }}</span>
-          <span v-else>{{ fmtTime(row.execute_at) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="内容" width="80">
-        <template #default="{ row }"><el-button size="small" link type="primary" @click="showContent(row)">查看</el-button></template>
-      </el-table-column>
-      <el-table-column label="日志" width="80">
-        <template #default="{ row }"><el-button size="small" link type="primary" @click="showLogs(row)">查看</el-button></template>
-      </el-table-column>
+      <el-table-column prop="id" label="#" width="60" />
+      <el-table-column prop="name" label="任务名称" min-width="140" show-overflow-tooltip />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
         </template>
       </el-table-column>
+      <el-table-column label="执行周期" width="140" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.schedule_type === 'cron'" :title="row.cron_expr">{{ cronToText(row.cron_expr) }}</span>
+          <span v-else>@{{ fmtTime(row.execute_at) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="type" label="任务类型" width="140">
+        <template #default="{ row }"><el-button size="small" type="primary" text @click="showContent(row)">{{ row.type }}</el-button></template>
+        
+      </el-table-column>
+      <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
+      <el-table-column label="任务日志" width="80">
+        <template #default="{ row }"><el-button size="small" link type="primary" @click="showLogs(row)">查看</el-button></template>
+      </el-table-column>
+      
       <el-table-column label="下次运行" width="160">
         <template #default="{ row }">{{ fmtTime(row.next_run) }}</template>
       </el-table-column>
@@ -202,6 +200,9 @@
 import { reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { listJobs, addJob, updateJob, deleteJob, runJob, toggleJob, listGoFuncs, listLogs } from '../api'
+import { cronToText } from '../utils/cron'
+import { fmtTime } from '../utils/timeParser'
+
 
 const loading = ref(false)
 const saving = ref(false)
@@ -288,7 +289,7 @@ function showLogs(row) {
   loadLogs()
 }
 
-const fmtTime = (t) => (t ? String(t).replace('T', ' ').slice(0, 19) : '-')
+
 const statusText = (s) => ({ 0: '停用', 1: '启用', 2: '已过期' }[s] ?? s)
 const statusTag = (s) => ({ 0: 'info', 1: 'success', 2: 'warning' }[s] ?? 'info')
 

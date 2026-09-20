@@ -24,3 +24,6 @@ export const toggleRetry = (id, status) => admin.post('/tabledata/retry/toggle',
 
 // TTL/Retry 策略执行日志(kind/strategy_id/status/start/end + 分页)
 export const listStrategyLogs = (params) => admin.get('/tabledata/ttl/log', { params })
+
+// 预览策略将执行的 SQL(body: {id, kind: ttl|retry})
+export const parseSql = (data) => admin.post('/tabledata/parsesql', data)

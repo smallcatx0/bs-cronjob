@@ -525,6 +525,50 @@ func (Tabledata) StrategyLog(c *gin.Context) {
 	resp.Paginate(c, pg, logs)
 }
 
+// ParseSql 解析 SQL 语句
+func (Tabledata) ParseSql(c *gin.Context) {
+	p := struct {
+		ID   int64  `json:"id" binding:"required"`
+		Kind string `json:"kind" binding:"required,oneof=ttl retry"`
+	}{}
+	err := valid.BindJsonAndCheck(c, &p)
+	if err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	switch p.Kind {
+	case "ttl":
+		ttl := new(rds.TabledataTtl)
+		cfg, err := ttl.GetByID(p.ID)
+		if err != nil {
+			resp.Fail(c, err)
+			return
+		}
+		sql, err := cfg.ParseSql()
+		if err != nil {
+			resp.Fail(c, err)
+			return
+		}
+		resp.Succ(c, gin.H{"kind": p.Kind, "sql": sql})
+		return
+	case "retry":
+		retry := new(rds.TabledataRetry)
+		cfg, err := retry.GetByID(p.ID)
+		if err != nil {
+			resp.Fail(c, err)
+			return
+		}
+		sql, err := cfg.ParseSql()
+		if err != nil {
+			resp.Fail(c, err)
+			return
+		}
+		resp.Succ(c, gin.H{"kind": p.Kind, "sql": sql})
+		return
+	}
+	resp.Fail(c, resp.ParamInValid("kind 不合法"))
+}
+
 // checkUnkeyTtl 校验 TTL 策略 unkey 唯一(作为 asynq 任务名组成部分)
 func checkUnkeyTtl(unkey string) error {
 	var cnt int64

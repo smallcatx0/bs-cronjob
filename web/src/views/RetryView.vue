@@ -27,14 +27,22 @@
     <!-- 策略表格 -->
     <el-table :data="rows" v-loading="loading" border stripe size="small">
       <el-table-column prop="id" label="#" width="60" />
-      <el-table-column prop="unkey" label="名称" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="desc" label="描述" min-width="110" show-overflow-tooltip />
+      <el-table-column prop="unkey" label="任务名称" min-width="140" show-overflow-tooltip />
+      <el-table-column label="状态" width="80">
+        <template #default="{ row }">
+          <el-tag :type="row.status === 'online' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column label="执行周期" width="110" >
+        <template #default="{ row }">{{ cronToText(row.spec) }}</template>
+      </el-table-column>
       <el-table-column label="库表" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">{{ row.db_name ? row.db_name + '.' + row.table_name : row.table_name }}</template>
       </el-table-column>
-      <el-table-column label="依据字段" min-width="130" show-overflow-tooltip>
+      <el-table-column label="时间字段" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">{{ row.column_name }} ({{ row.column_type }})</template>
       </el-table-column>
+
       <el-table-column label="时间窗口" width="180">
         <template #default="{ row }">
           前
@@ -46,22 +54,17 @@
       <el-table-column label="更新字段" min-width="130" show-overflow-tooltip>
         <template #default="{ row }">{{ row.set_fields }}</template>
       </el-table-column>
-      <el-table-column prop="limit" label="批次" width="70" />
-      <el-table-column prop="spec" label="调度规则" min-width="100" show-overflow-tooltip />
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'online' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
-        </template>
-      </el-table-column>
       <el-table-column label="日志" width="70">
         <template #default="{ row }"><el-button size="small" link type="primary" @click="showLogs(row)">查看</el-button></template>
       </el-table-column>
-      <el-table-column label="操作" width="240" fixed="right">
+      <el-table-column prop="desc" label="描述" min-width="110" show-overflow-tooltip />
+      <el-table-column label="操作" width="320" fixed="right">
         <template #default="{ row }">
           <el-button size="small" v-if="row.status !== 'online'" type="success" @click="doToggle(row, 'online')">上线</el-button>
           <el-button size="small" v-else type="warning" @click="doToggle(row, 'offline')">下线</el-button>
           <el-button size="small" :disabled="row.status === 'online'" @click="openEdit(row)">编辑</el-button>
           <el-button size="small" type="danger" :disabled="row.status === 'online'" @click="doDelete(row)">删除</el-button>
+          <el-button size="small" link type="primary" @click="showSql(row)">预览SQL</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -174,6 +177,14 @@
         <el-button @click="logsVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- SQL 预览弹窗(沿用日志弹窗的 log-box 展示模式) -->
+    <el-dialog v-model="sqlVisible" :title="sqlTitle" width="640px">
+      <pre v-loading="sqlLoading" class="log-box">{{ sqlText || '(无)' }}</pre>
+      <template #footer>
+        <el-button @click="sqlVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -181,7 +192,9 @@
 import { reactive, ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listRetry, addRetry, updateRetry, deleteRetry, toggleRetry, listStrategyLogs } from '../api'
+import { listRetry, addRetry, updateRetry, deleteRetry, toggleRetry, listStrategyLogs, parseSql } from '../api'
+import { fmtTime, fmtTtl } from '../utils/timeParser'
+import { cronToText } from '../utils/cron'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -202,36 +215,18 @@ const logRows = ref([])
 const logsPage = reactive({ page: 1, limit: 10, total: 0 })
 const currentStrategyId = ref(null)
 
-const fmtTime = (t) => (t ? String(t).replace('T', ' ').slice(0, 19) : '-')
+// SQL 预览弹窗
+const sqlVisible = ref(false)
+const sqlLoading = ref(false)
+const sqlTitle = ref('预览 SQL')
+const sqlText = ref('')
+
 const fmtCost = (row) => {
   if (!row.started_at || !row.finished_at) return '-'
   const ms = new Date(String(row.finished_at).replace('T', ' ').replace(/-/g, '/')
     .slice(0, 19)) - new Date(String(row.started_at).replace('T', ' ').replace(/-/g, '/')
     .slice(0, 19))
   return ms >= 0 ? ms + 'ms' : '-'
-}
-
-// 将秒数格式化为更易读的时长(天/小时/分钟/秒), 最多保留两个非零单位
-const fmtTtl = (s) => {
-  const n = Number(s)
-  if (!n || n <= 0) return '-'
-  const units = [
-    { label: '天', sec: 86400 },
-    { label: '小时', sec: 3600 },
-    { label: '分钟', sec: 60 },
-    { label: '秒', sec: 1 },
-  ]
-  let rest = n
-  const parts = []
-  for (const u of units) {
-    const v = Math.floor(rest / u.sec)
-    if (v > 0) {
-      parts.push(`${v}${u.label}`)
-      rest -= v * u.sec
-    }
-    if (parts.length === 2) break
-  }
-  return parts.join('') || `${n}秒`
 }
 
 // cron 快捷输入(与 asynq 一致的标准 5 段: 分 时 日 月 周)
@@ -345,6 +340,19 @@ function showLogs(row) {
   logRows.value = []
   logsVisible.value = true
   loadLogs()
+}
+
+async function showSql(row) {
+  sqlTitle.value = `预览 SQL - ${row.unkey}`
+  sqlText.value = ''
+  sqlVisible.value = true
+  sqlLoading.value = true
+  try {
+    const data = await parseSql({ id: row.id, kind: 'retry' })
+    sqlText.value = data?.sql || ''
+  } finally {
+    sqlLoading.value = false
+  }
 }
 
 onMounted(() => load(1))

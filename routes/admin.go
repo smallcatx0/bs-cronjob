@@ -42,4 +42,7 @@ func registAdmin(r *gin.Engine) {
 	retryRout.POST("/delete", td.RetryDelete)
 	retryRout.POST("/toggle", td.RetryToggle)
 	retryRout.GET("/log", td.StrategyLog) // 策略执行日志(kind 可选, 不传则查全部)
+
+	// SQL 预览(ttl/retry 共用, 按 kind 分发生成将执行的 SQL)
+	root.POST("/tabledata/parsesql", td.ParseSql)
 }

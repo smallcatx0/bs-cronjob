@@ -31,3 +31,11 @@ POST {{baseurl}}/admin/jobs/add
 
 GET {{baseurl}}/admin/jobs/list
 
+### 预览策略将执行的 SQL(kind: ttl / retry)
+POST {{baseurl}}/admin/tabledata/parsesql
+
+{
+  "id": 1,
+  "kind": "ttl"
+}
+

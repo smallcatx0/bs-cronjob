@@ -1,6 +1,7 @@
 package rds
 
 import (
+	"fmt"
 	"time"
 
 	"cron-job/models/dao"
@@ -62,6 +63,32 @@ func (t *TabledataRetry) SetStatus(id int64, status string) error {
 		Update("status", status).Error
 }
 
+// ParseSql 根据 Retry 策略配置生成实际执行的更新 SQL, 逻辑与 db_strategy.updateTableRecord 保持一致,
+// 供前端预览即将执行的语句; column_type 非法时返回 error
+func (t *TabledataRetry) ParseSql() (string, error) {
+	curr := time.Now()
+	st := curr.Add(-time.Second * time.Duration(t.Before))
+	ed := st.Add(time.Second * time.Duration(t.Duration))
+	findWhere := ""
+	switch t.ColumnType {
+	case ColumType_Unix:
+		findWhere = fmt.Sprintf("`%s` >= %d AND `%s` < %d",
+			t.ColumnName, st.Unix(), t.ColumnName, ed.Unix())
+	case ColumType_Timestamp:
+		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
+			t.ColumnName, st.Format("2006-01-02 15:04:05"), t.ColumnName, ed.Format("2006-01-02 15:04:05"))
+	case ColumType_Datetime:
+		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
+			t.ColumnName, st.Format("2006-01-02 15:04:05"), t.ColumnName, ed.Format("2006-01-02 15:04:05"))
+	default:
+		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
+			t.ColumnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
+	}
+	findWhere += " AND " + t.FindWh
+	return fmt.Sprintf("UPDATE `%s` SET %s WHERE %s",
+		t.Tablename, t.SetFields, findWhere), nil
+}
+
 type TabledataTtl struct {
 	ID         int64  `gorm:"primaryKey; column:id" json:"id"`
 	UnKey      string `gorm:"column:unkey" json:"unkey"`                                    // 策略唯一key
@@ -100,6 +127,27 @@ func (t *TabledataTtl) GetByID(id int64) (*TabledataTtl, error) {
 func (t *TabledataTtl) SetStatus(id int64, status string) error {
 	return dao.MysqlCli.Model(&TabledataTtl{}).Where("id = ?", id).
 		Update("status", status).Error
+}
+
+// ParseSql 根据 TTL 策略配置生成实际执行的删除 SQL, 逻辑与 db_strategy.deleteTableRecord 保持一致,
+// 供前端预览即将执行的语句; column_type 非法时返回 error
+func (t *TabledataTtl) ParseSql() (string, error) {
+	dt := time.Second * time.Duration(t.TtlValue)
+	ttl := time.Now().Add(-dt)
+	switch t.ColumnType {
+	case ColumType_Unix:
+		return fmt.Sprintf("DELETE FROM %s WHERE %s < %d LIMIT %d",
+			t.Tablename, t.ColumnName, ttl.Unix(), t.Limit), nil
+	case ColumType_Timestamp:
+		return fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
+			t.Tablename, t.ColumnName, ttl.Format("2006-01-02 15:04:05"), t.Limit), nil
+	case ColumType_Datetime:
+		return fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
+			t.Tablename, t.ColumnName, ttl.Format("2006-01-02 15:04:05"), t.Limit), nil
+	default:
+		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
+			t.ColumnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
+	}
 }
 
 // TabledataStrategyLog TTL/Retry 策略执行日志, 复用 JobLog 状态(running/success/failed)
