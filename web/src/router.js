@@ -34,6 +34,11 @@ const routes = [
         name: 'retry',
         component: () => import('~/views/RetryView.vue'),
       },
+      {
+        path: '/admin/strategy-logs',
+        name: 'strategy-logs',
+        component: () => import('~/views/StrategyLogsView.vue'),
+      },
     ],
   },
 ]

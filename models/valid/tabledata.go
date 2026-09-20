@@ -95,3 +95,12 @@ type RetryUpdate struct {
 	Limit      int64  `json:"limit" binding:"omitempty,min=1"`
 	Desc       string `json:"desc" binding:"omitempty,max=255"`
 }
+
+// StrategyLogQuery TTL/Retry 策略执行日志查询条件(start/end 按 started_at 过滤)
+type StrategyLogQuery struct {
+	Kind       string `form:"kind" binding:"omitempty,oneof=ttl retry"`
+	StrategyID int64  `form:"strategy_id" binding:"omitempty,min=1"`
+	Status     string `form:"status" binding:"omitempty,oneof=running success failed"`
+	Start      string `form:"start" binding:"omitempty,datetime=2006-01-02 15:04:05"`
+	End        string `form:"end" binding:"omitempty,datetime=2006-01-02 15:04:05"`
+}

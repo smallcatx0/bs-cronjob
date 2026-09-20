@@ -20,6 +20,7 @@
       <el-form-item>
         <el-button type="primary" @click="load(1)">查询</el-button>
         <el-button type="success" @click="openEdit(null)">新建策略</el-button>
+        <RouterLink to="/admin/strategy-logs"><el-button>策略日志</el-button></RouterLink>
       </el-form-item>
     </el-form>
 
@@ -48,6 +49,9 @@
         <template #default="{ row }">
           <el-tag :type="row.status === 'online' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
         </template>
+      </el-table-column>
+      <el-table-column label="日志" width="70">
+        <template #default="{ row }"><el-button size="small" link type="primary" @click="showLogs(row)">查看</el-button></template>
       </el-table-column>
       <el-table-column label="操作" width="240" fixed="right">
         <template #default="{ row }">
@@ -127,13 +131,54 @@
         <el-button type="primary" :loading="saving" @click="doSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 执行日志弹窗(可展开行直接显示错误/输出, 沿用 JobsView 模式) -->
+    <el-dialog v-model="logsVisible" :title="logsTitle" width="760px">
+      <el-table :data="logRows" v-loading="logsLoading" border stripe size="small">
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div style="padding: 8px 16px">
+              <template v-if="row.error">
+                <h4 style="color: #f56c6c; margin: 4px 0">错误</h4>
+                <pre class="log-box err">{{ row.error }}</pre>
+              </template>
+              <h4 style="margin: 4px 0">输出</h4>
+              <pre class="log-box">{{ row.output || '(无输出)' }}</pre>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="id" label="ID" width="70" />
+        <el-table-column label="结果" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="{ running: 'info', success: 'success', failed: 'danger' }[row.status]">{{ row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="开始时间" width="160"><template #default="{ row }">{{ fmtTime(row.started_at) }}</template></el-table-column>
+        <el-table-column label="结束时间" width="160"><template #default="{ row }">{{ fmtTime(row.finished_at) }}</template></el-table-column>
+        <el-table-column label="耗时" width="90"><template #default="{ row }">{{ fmtCost(row) }}</template></el-table-column>
+      </el-table>
+
+      <el-pagination
+        style="margin-top: 12px; justify-content: flex-end"
+        layout="total, sizes, prev, pager, next"
+        :total="logsPage.total"
+        v-model:current-page="logsPage.page"
+        v-model:page-size="logsPage.limit"
+        :page-sizes="[10, 20, 50]"
+        @change="loadLogs"
+      />
+      <template #footer>
+        <el-button @click="logsVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
+import { RouterLink } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listRetry, addRetry, updateRetry, deleteRetry, toggleRetry } from '../api'
+import { listRetry, addRetry, updateRetry, deleteRetry, toggleRetry, listStrategyLogs } from '../api'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -143,6 +188,23 @@ const query = reactive({ unkey: '', db_name: '', table_name: '', status: '' })
 
 const editVisible = ref(false)
 const form = reactive({ id: null, unkey: '', dsn: '', db_name: '', table_name: '', column_name: '', column_type: 'datetime', find_wh: '', set_fields: '', before: 300, duration: 60, limit: 1000, spec: '', desc: '' })
+
+// 执行日志弹窗
+const logsVisible = ref(false)
+const logsTitle = ref('执行日志')
+const logsLoading = ref(false)
+const logRows = ref([])
+const logsPage = reactive({ page: 1, limit: 10, total: 0 })
+const currentStrategyId = ref(null)
+
+const fmtTime = (t) => (t ? String(t).replace('T', ' ').slice(0, 19) : '-')
+const fmtCost = (row) => {
+  if (!row.started_at || !row.finished_at) return '-'
+  const ms = new Date(String(row.finished_at).replace('T', ' ').replace(/-/g, '/')
+    .slice(0, 19)) - new Date(String(row.started_at).replace('T', ' ').replace(/-/g, '/')
+    .slice(0, 19))
+  return ms >= 0 ? ms + 'ms' : '-'
+}
 
 // cron 快捷输入(与 asynq 一致的标准 5 段: 分 时 日 月 周)
 const quickCrons = [
@@ -230,6 +292,28 @@ async function doDelete(row) {
   load()
 }
 
+async function loadLogs() {
+  if (!currentStrategyId.value) return
+  logsLoading.value = true
+  try {
+    const data = await listStrategyLogs({ kind: 'retry', strategy_id: currentStrategyId.value, page: logsPage.page, limit: logsPage.limit })
+    logRows.value = data?.list || []
+    Object.assign(logsPage, data?.page || {})
+  } finally {
+    logsLoading.value = false
+  }
+}
+
+function showLogs(row) {
+  currentStrategyId.value = row.id
+  logsTitle.value = `执行日志 - ${row.unkey}`
+  logsPage.page = 1
+  logsPage.total = 0
+  logRows.value = []
+  logsVisible.value = true
+  loadLogs()
+}
+
 onMounted(() => load(1))
 </script>
 
@@ -238,4 +322,10 @@ onMounted(() => load(1))
 .cron-quick { width: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .cron-tag { cursor: pointer; }
 .cron-tag:hover { color: var(--el-color-primary); border-color: var(--el-color-primary); }
+.log-box {
+  background: #0b1021; color: #d5e0ff; padding: 10px; border-radius: 4px;
+  max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  font-size: 12px; margin: 4px 0;
+}
+.log-box.err { color: #ffb4b4; }
 </style>

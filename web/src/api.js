@@ -21,3 +21,6 @@ export const addRetry = (data) => admin.post('/tabledata/retry/add', data)
 export const updateRetry = (data) => admin.post('/tabledata/retry/update', data)
 export const deleteRetry = (id) => admin.post('/tabledata/retry/delete', { id })
 export const toggleRetry = (id, status) => admin.post('/tabledata/retry/toggle', { id, status })
+
+// TTL/Retry 策略执行日志(kind/strategy_id/status/start/end + 分页)
+export const listStrategyLogs = (params) => admin.get('/tabledata/ttl/log', { params })

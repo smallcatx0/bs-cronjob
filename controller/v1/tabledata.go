@@ -467,6 +467,49 @@ func (Tabledata) RetryToggle(c *gin.Context) {
 	resp.Succ(c, cfg)
 }
 
+// StrategyLog 分页查询 TTL/Retry 策略执行日志(按开始时间倒序, 与 jobs/log 同构)
+func (Tabledata) StrategyLog(c *gin.Context) {
+	p := valid.StrategyLogQuery{}
+	if err := valid.BindQueryAndCheck(c, &p); err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	q := dao.MysqlCli.Model(&rds.TabledataStrategyLog{})
+	if p.Kind != "" {
+		q = q.Where("kind = ?", p.Kind)
+	}
+	if p.StrategyID > 0 {
+		q = q.Where("strategy_id = ?", p.StrategyID)
+	}
+	if p.Status != "" {
+		q = q.Where("status = ?", p.Status)
+	}
+	if p.Start != "" {
+		q = q.Where("started_at >= ?", p.Start)
+	}
+	if p.End != "" {
+		q = q.Where("started_at <= ?", p.End)
+	}
+	q = q.Order("started_at DESC, id DESC")
+
+	pg := resp.NewPage(c)
+	q, err := pg.Paginate(q)
+	if err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	if pg.Total == 0 {
+		resp.Paginate(c, pg, nil)
+		return
+	}
+	logs := make([]rds.TabledataStrategyLog, 0, pg.Limit)
+	if err = q.Find(&logs).Error; err != nil {
+		resp.Fail(c, err)
+		return
+	}
+	resp.Paginate(c, pg, logs)
+}
+
 // checkUnkeyTtl 校验 TTL 策略 unkey 唯一(作为 asynq 任务名组成部分)
 func checkUnkeyTtl(unkey string) error {
 	var cnt int64

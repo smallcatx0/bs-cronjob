@@ -12,33 +12,10 @@
 <script setup>
 import { ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Timer, Document } from '@element-plus/icons-vue'
+import { authMenu } from '~/config/menu'
 
 const route = useRoute()
 const isCollapse = ref(false)
-
-const authMenu = [
-  {
-    label: '任务管理',
-    path: '/admin/jobs',
-    icon: Timer,
-  },
-  {
-    label: '运行记录',
-    path: '/admin/logs',
-    icon: Document,
-  },
-  {
-    label: 'TTL策略',
-    path: '/admin/ttl',
-    icon: Document,
-  },
-  {
-    label: 'Retry策略',
-    path: '/admin/retry',
-    icon: Document,
-  },
-]
 </script>
 
 <style scoped>

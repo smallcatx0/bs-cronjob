@@ -32,18 +32,6 @@ const (
 	logPre = "[db_strategy] "
 )
 
-// 策略配置模型与时间列类型常量已迁移至 models/dao/rds(tabledata.go), 此处保留别名兼容包内引用
-var (
-	ColumType_Unix      = rds.ColumType_Unix
-	ColumType_Timestamp = rds.ColumType_Timestamp
-	ColumType_Datetime  = rds.ColumType_Datetime
-)
-
-type (
-	TabledataTtl   = rds.TabledataTtl
-	TabledataRetry = rds.TabledataRetry
-)
-
 // unlockScript 仅当锁仍为自己持有时删除(compare-and-delete), 避免误删其他实例重新抢到的锁
 var unlockScript = redis.NewScript(`
 if redis.call("GET", KEYS[1]) == ARGV[1] then
@@ -267,10 +255,11 @@ func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) error {
 	if s.db == nil {
 		return fmt.Errorf("%w: 配置库连接为空, 无法查询策略配置", asynq.SkipRetry)
 	}
-	// 按 Kind+ID 查配置库: 取运行期最新策略配置(改配置立即生效), 并拿到锁唯一名与执行闭包
+	// 按 Kind+ID 查配置库: 取运行期最新策略配置(改配置立即生效), 并拿到锁唯一名、策略名与执行闭包
 	var (
 		unkey string
-		runFn func() error
+		name  string
+		runFn func() (string, error)
 	)
 	switch p.Kind {
 	case KindTtl:
@@ -279,14 +268,14 @@ func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) error {
 			s.Logger.Error(logPre + fmt.Sprintf("查询ttl策略失败 id=%d err=%s", p.ID, err.Error()))
 			return fmt.Errorf("%w: 查询ttl策略失败 id=%d err=%v", asynq.SkipRetry, p.ID, err)
 		}
-		unkey, runFn = cfg.UnKey, func() error { return s.deleteTableRecord(*cfg) }
+		unkey, name, runFn = cfg.UnKey, cfg.UnKey, func() (string, error) { return s.deleteTableRecord(*cfg) }
 	case KindRetry:
 		cfg, err := s.retry.GetByID(p.ID)
 		if err != nil {
 			s.Logger.Error(logPre + fmt.Sprintf("查询retry策略失败 id=%d err=%s", p.ID, err.Error()))
 			return fmt.Errorf("%w: 查询retry策略失败 id=%d err=%v", asynq.SkipRetry, p.ID, err)
 		}
-		unkey, runFn = cfg.Unkey, func() error { return s.updateTableRecord(*cfg) }
+		unkey, name, runFn = cfg.Unkey, cfg.Unkey, func() (string, error) { return s.updateTableRecord(*cfg) }
 	default:
 		return fmt.Errorf("%w: 未知策略类型 kind=%s", asynq.SkipRetry, p.Kind)
 	}
@@ -301,7 +290,11 @@ func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) error {
 	defer s.releaseLock(funName, token)
 	defer s.startLockRenew(funName, token)()
 
-	return runFn()
+	// 参照 tasks 包 JobLog 机制: 执行开始写 running 日志, 结束回写结果
+	jl := rds.StartStrategyLog(p.Kind, p.ID, name)
+	output, err := runFn()
+	rds.FinishStrategyLog(jl, output, err)
+	return err
 }
 
 // newLockToken 生成锁 owner 标识: 主机名 + 随机串, 区分同机不同任务与不同实例
@@ -374,15 +367,15 @@ func (s *DbStrategy) startLockRenew(funcName, token string) (stop func()) {
 	return func() { once.Do(func() { close(done) }) }
 }
 
-// 数据库删除逻辑
-func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) error {
+// 数据库删除逻辑, 返回执行摘要供策略日志记录
+func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) (string, error) {
 	db, err := dao.ConnMysql(cfg.Dsn, true)
 	if err != nil {
 		s.Logger.Error(logPre + fmt.Sprintf(
 			"数据库(%s)链接失败 err=%s",
 			dao.DsnMask(cfg.Dsn), err.Error(),
 		))
-		return err
+		return "", err
 	}
 	if s.Debug {
 		db = db.Debug()
@@ -393,18 +386,18 @@ func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) error {
 	ttl := time.Now().Add(-dt)
 	var sql string
 	switch cfg.ColumnType {
-	case ColumType_Unix:
+	case rds.ColumType_Unix:
 		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < %d LIMIT %d",
 			cfg.Tablename, cfg.ColumnName, ttl.Unix(), cfg.Limit)
-	case ColumType_Timestamp:
+	case rds.ColumType_Timestamp:
 		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
 			cfg.Tablename, cfg.ColumnName, ttl.Format("2006-01-02 15:04:05"), cfg.Limit)
-	case ColumType_Datetime:
+	case rds.ColumType_Datetime:
 		sql = fmt.Sprintf("DELETE FROM %s WHERE %s < '%s' LIMIT %d",
 			cfg.Tablename, cfg.ColumnName, ttl.Format("2006-01-02 15:04:05"), cfg.Limit)
 	default:
-		return fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
-			cfg.ColumnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
+		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
+			cfg.ColumnType, rds.ColumType_Unix, rds.ColumType_Timestamp, rds.ColumType_Datetime)
 	}
 	deletedNum := int64(0)
 	for {
@@ -419,7 +412,7 @@ func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) error {
 				"表(%s.%s); sql=%s, err=%s",
 				cfg.DbName, cfg.Tablename, sql, err.Error(),
 			))
-			return err
+			return "", err
 		}
 		deletedNum += rows
 		if rows == 0 {
@@ -428,27 +421,27 @@ func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) error {
 		time.Sleep(time.Second)
 	}
 	cost := time.Since(st)
-	s.Logger.Info(logPre + fmt.Sprintf(
-		"表(%s.%s) sql=%s 删除%d条，耗时%dms",
-		cfg.DbName, cfg.Tablename, sql, deletedNum, cost/time.Millisecond,
-	))
-	return nil
+
+	out := fmt.Sprintf("表(%s.%s) sql=%s 删除%d条，耗时%dms",
+		cfg.DbName, cfg.Tablename, sql, deletedNum, cost/time.Millisecond)
+	s.Logger.Info(logPre + out)
+	return out, nil
 }
 
-// 数据库重试逻辑
+// 数据库重试逻辑, 返回执行摘要供策略日志记录
 
 type CountRes struct {
 	Count int64 `gorm:"column:c"`
 }
 
-func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) error {
+func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) (string, error) {
 	db, err := dao.ConnMysql(cfg.Dsn, true)
 	if err != nil {
 		s.Logger.Error(logPre + fmt.Sprintf(
 			"数据库(%s)链接失败 err=%s",
 			dao.DsnMask(cfg.Dsn), err.Error(),
 		))
-		return err
+		return "", err
 	}
 	if s.Debug {
 		db = db.Debug()
@@ -459,20 +452,20 @@ func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) error {
 	ed := st.Add(time.Second * time.Duration(cfg.Duration))
 	findWhere := ""
 	switch cfg.ColumnType {
-	case ColumType_Unix:
+	case rds.ColumType_Unix:
 		findWhere = fmt.Sprintf("`%s` >= %d AND `%s` < %d",
 			cfg.ColumnName, st.Unix(), cfg.ColumnName, ed.Unix())
-	case ColumType_Timestamp:
+	case rds.ColumType_Timestamp:
 		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
 			cfg.ColumnName, st.Format("2006-01-02 15:04:05"), cfg.ColumnName, ed.Format("2006-01-02 15:04:05"),
 		)
-	case ColumType_Datetime:
+	case rds.ColumType_Datetime:
 		findWhere = fmt.Sprintf("`%s` >= '%s' AND `%s` < '%s'",
 			cfg.ColumnName, st.Format("2006-01-02 15:04:05"), cfg.ColumnName, ed.Format("2006-01-02 15:04:05"),
 		)
 	default:
-		return fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
-			cfg.ColumnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
+		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
+			cfg.ColumnType, rds.ColumType_Unix, rds.ColumType_Timestamp, rds.ColumType_Datetime)
 	}
 	findWhere += " AND " + cfg.FindWh
 	findSql := fmt.Sprintf(
@@ -492,30 +485,36 @@ func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) error {
 			"表(%s.%s); sql=%s, err=%s",
 			cfg.DbName, cfg.Tablename, findSql, err.Error(),
 		))
-		return err
+		return "", err
 	}
 	if res.Count == 0 {
 		// 不需要更新数据
 		dt := time.Since(curr)
-		s.Logger.Info(logPre + fmt.Sprintf(
-			"表(%s.%s) sql=%s 需无需更新，耗时%dms",
-			cfg.DbName, cfg.Tablename, findSql, dt/time.Millisecond,
-		))
-		return nil
+		out := fmt.Sprintf("表(%s.%s) sql=%s 需无需更新，耗时%dms",
+			cfg.DbName, cfg.Tablename, findSql, dt/time.Millisecond)
+		s.Logger.Info(logPre + out)
+		return out, nil
 	}
+	updatedNum := int64(0)
 	err = func() error {
 		timeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		return db.WithContext(timeout).Exec(updateSql).Error
+		res := db.WithContext(timeout).Exec(updateSql)
+		updatedNum = res.RowsAffected
+		return res.Error
 	}()
 	if err != nil {
 		s.Logger.Error(logPre + fmt.Sprintf(
 			"表(%s.%s); sql=%s, err=%s",
 			cfg.DbName, cfg.Tablename, findSql, err.Error(),
 		))
-		return err
+		return "", err
 	}
 	// TODO: 需要更新量，超过某阈值 告警
 
-	return nil
+	cost := time.Since(curr)
+	out := fmt.Sprintf("表(%s.%s) 命中%d条, 更新%d条, sql=%s, 耗时%dms",
+		cfg.DbName, cfg.Tablename, res.Count, updatedNum, updateSql, cost/time.Millisecond)
+	s.Logger.Info(logPre + out)
+	return out, nil
 }

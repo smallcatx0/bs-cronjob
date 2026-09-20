@@ -7,6 +7,7 @@ import (
 
 	"cron-job/internal/tasks"
 	"cron-job/models/dao"
+	rds "cron-job/models/dao/rds"
 
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
@@ -17,13 +18,13 @@ import (
 var test_db_dsn string
 var test_redis_addr string
 
-var ttl = TabledataTtl{
+var ttl = rds.TabledataTtl{
 	ID:         1,
 	UnKey:      "bs_sth_unitest",
 	DbName:     "bs",
 	Tablename:  "bs_sth_task",
 	ColumnName: "updated_at",
-	ColumnType: ColumType_Timestamp,
+	ColumnType: rds.ColumType_Timestamp,
 	Limit:      100,
 	TtlValue:   3600 * 24 * 30, // 保存一个月
 }
@@ -34,11 +35,11 @@ func Test_deleteTableRecord(t *testing.T) {
 	stg, err := NewDbStrategy(nil, nil)
 	assert.NoError(t, err)
 	stg.Debug = true
-	err = stg.deleteTableRecord(ttl)
+	_, err = stg.deleteTableRecord(ttl)
 	assert.NoError(t, err)
 }
 
-var dbRetry = TabledataRetry{
+var dbRetry = rds.TabledataRetry{
 	ID:         1,
 	Unkey:      "bs_sth_job_retry",
 	Dsn:        "",
@@ -60,7 +61,7 @@ func Test_updateTableRecord(t *testing.T) {
 	stg, err := NewDbStrategy(nil, nil)
 	assert.NoError(t, err)
 	stg.Debug = true
-	err = stg.updateTableRecord(dbRetry)
+	_, err = stg.updateTableRecord(dbRetry)
 	assert.NoError(t, err)
 }
 

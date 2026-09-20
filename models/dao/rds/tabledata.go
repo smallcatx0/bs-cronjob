@@ -1,6 +1,8 @@
 package rds
 
 import (
+	"time"
+
 	"cron-job/models/dao"
 )
 
@@ -98,4 +100,48 @@ func (t *TabledataTtl) GetByID(id int64) (*TabledataTtl, error) {
 func (t *TabledataTtl) SetStatus(id int64, status string) error {
 	return dao.MysqlCli.Model(&TabledataTtl{}).Where("id = ?", id).
 		Update("status", status).Error
+}
+
+// TabledataStrategyLog TTL/Retry 策略执行日志, 复用 JobLog 状态(running/success/failed)
+type TabledataStrategyLog struct {
+	ID           int64      `gorm:"primaryKey; column:id" json:"id"`
+	Kind         string     `gorm:"size:16;index; column:kind" json:"kind"`              // ttl / retry
+	StrategyID   int64      `gorm:"index; column:strategy_id" json:"strategy_id"`        // 策略配置行主键
+	StrategyName string     `gorm:"size:128; column:strategy_name" json:"strategy_name"` // 策略唯一名 unkey
+	Status       string     `gorm:"size:32; column:status" json:"status"`                // running / success / failed
+	Output       string     `gorm:"type:text; column:output" json:"output"`
+	Error        string     `gorm:"type:text; column:error" json:"error"`
+	StartedAt    *time.Time `gorm:"column:started_at" json:"started_at"`
+	FinishedAt   *time.Time `gorm:"column:finished_at" json:"finished_at"`
+	CreatedAt    time.Time  `gorm:"column:created_at" json:"created_at"`
+}
+
+func (TabledataStrategyLog) TableName() string { return "bs_tabledata_strategy_log" }
+
+// StartStrategyLog 策略开始执行,写 running 日志(参照 StartJobLog)
+func StartStrategyLog(kind string, id int64, name string) *TabledataStrategyLog {
+	now := time.Now()
+	jl := &TabledataStrategyLog{
+		Kind:         kind,
+		StrategyID:   id,
+		StrategyName: name,
+		Status:       LogRunning,
+		StartedAt:    &now,
+	}
+	dao.MysqlCli.Create(jl)
+	return jl
+}
+
+// FinishStrategyLog 策略执行结束,回写结果(参照 FinishJobLog)
+func FinishStrategyLog(jl *TabledataStrategyLog, output string, runErr error) {
+	now := time.Now()
+	jl.FinishedAt = &now
+	jl.Output = truncate(output, 8192)
+	if runErr != nil {
+		jl.Status = LogFailed
+		jl.Error = truncate(runErr.Error(), 2048)
+	} else {
+		jl.Status = LogSuccess
+	}
+	dao.MysqlCli.Save(jl)
 }

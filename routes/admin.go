@@ -32,6 +32,7 @@ func registAdmin(r *gin.Engine) {
 	ttlRout.POST("/update", td.TtlUpdate)
 	ttlRout.POST("/delete", td.TtlDelete)
 	ttlRout.POST("/toggle", td.TtlToggle)
+	ttlRout.GET("/log", td.StrategyLog) // 策略执行日志(kind 可选, 不传则查全部)
 
 	retryRout := root.Group("/tabledata/retry")
 	retryRout.GET("/list", td.RetryList)
@@ -40,4 +41,5 @@ func registAdmin(r *gin.Engine) {
 	retryRout.POST("/update", td.RetryUpdate)
 	retryRout.POST("/delete", td.RetryDelete)
 	retryRout.POST("/toggle", td.RetryToggle)
+	retryRout.GET("/log", td.StrategyLog) // 策略执行日志(kind 可选, 不传则查全部)
 }
