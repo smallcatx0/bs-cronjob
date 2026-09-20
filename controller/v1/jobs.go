@@ -8,6 +8,7 @@ import (
 	"cron-job/models/dao"
 	"cron-job/models/dao/rds"
 	"cron-job/models/valid"
+	"cron-job/pkg/glog"
 
 	"github.com/gin-gonic/gin"
 )
@@ -54,7 +55,31 @@ func (Jobs) List(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
-	resp.Paginate(c, pg, jobs)
+
+	// 附带每个任务最近一次执行摘要(辅助信息, 查询失败不阻断列表)
+	jobIDs := make([]int64, 0, len(jobs))
+	for _, j := range jobs {
+		jobIDs = append(jobIDs, j.ID)
+	}
+	lastLogs, lerr := rds.LastRunBriefs(jobIDs)
+	if lerr != nil {
+		glog.Error("LastRunBriefs", lerr.Error())
+		lastLogs = nil
+	}
+	type row struct {
+		rds.Job
+		LastLog *rds.LastRunBrief `json:"last_log"`
+	}
+	out := make([]row, 0, len(jobs))
+	for _, j := range jobs {
+		r := row{Job: j}
+		if lb, ok := lastLogs[j.ID]; ok {
+			brief := lb
+			r.LastLog = &brief
+		}
+		out = append(out, r)
+	}
+	resp.Paginate(c, pg, out)
 }
 
 // Add 新建任务(默认停用, 待第一次测试后才可启用)

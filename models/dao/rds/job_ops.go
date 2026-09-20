@@ -49,6 +49,53 @@ func SetNextRun(id int64, nextRun *time.Time) error {
 		Update("next_run", nextRun).Error
 }
 
+// LastRunBrief 任务最近一次执行摘要
+type LastRunBrief struct {
+	JobID      int64      `gorm:"column:job_id" json:"job_id"`
+	Status     string     `gorm:"column:status" json:"status"` // running / success / failed
+	StartedAt  *time.Time `gorm:"column:started_at" json:"started_at"`
+	FinishedAt *time.Time `gorm:"column:finished_at" json:"finished_at"`
+}
+
+// LastRunBriefs 批量查询各任务最近一次执行摘要, 以 job_id 为 key 返回
+func LastRunBriefs(jobIDs []int64) (map[int64]LastRunBrief, error) {
+	out := make(map[int64]LastRunBrief, len(jobIDs))
+	if len(jobIDs) == 0 {
+		return out, nil
+	}
+	// 1. 取每个任务最近一条日志的 id (日志按启动顺序自增)
+	type maxID struct {
+		JobID int64 `gorm:"column:job_id"`
+		ID    int64 `gorm:"column:id"`
+	}
+	var maxIDs []maxID
+	err := dao.MysqlCli.Model(&JobLog{}).
+		Select("job_id, MAX(id) AS id").
+		Where("job_id IN ?", jobIDs).
+		Group("job_id").
+		Find(&maxIDs).Error
+	if err != nil || len(maxIDs) == 0 {
+		return out, err
+	}
+	// 2. 按 id 集合回查详情
+	ids := make([]int64, 0, len(maxIDs))
+	for _, m := range maxIDs {
+		ids = append(ids, m.ID)
+	}
+	var briefs []LastRunBrief
+	err = dao.MysqlCli.Model(&JobLog{}).
+		Select("job_id, status, started_at, finished_at").
+		Where("id IN ?", ids).
+		Find(&briefs).Error
+	if err != nil {
+		return out, err
+	}
+	for _, b := range briefs {
+		out[b.JobID] = b
+	}
+	return out, nil
+}
+
 // StartJobLog 任务开始执行,写 running 日志
 func StartJobLog(job *Job, triggerType string) *JobLog {
 	now := time.Now()

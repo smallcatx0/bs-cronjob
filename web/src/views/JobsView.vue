@@ -46,6 +46,15 @@
           <span v-else>@{{ fmtTime(row.execute_at) }}</span>
         </template>
       </el-table-column>
+      <el-table-column label="上次执行" width="110">
+        <template #default="{ row }">
+          <el-tag v-if="row.last_log" :type="logTag(row.last_log.status)" size="small"
+                  :title="`开始 ${fmtTime(row.last_log.started_at)} / 结束 ${fmtTime(row.last_log.finished_at)}`">
+            {{ logText(row.last_log.status) }}
+          </el-tag>
+          <span v-else>-</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="type" label="任务类型" width="140">
         <template #default="{ row }"><el-button size="small" type="primary" text @click="showContent(row)">{{ row.type }}</el-button></template>
         
@@ -55,7 +64,7 @@
         <template #default="{ row }"><el-button size="small" link type="primary" @click="showLogs(row)">查看</el-button></template>
       </el-table-column>
       
-      <el-table-column label="下次运行" width="160">
+      <el-table-column label="下次运行" width="130">
         <template #default="{ row }">{{ fmtTime(row.next_run) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="320" fixed="right">
@@ -292,6 +301,9 @@ function showLogs(row) {
 
 const statusText = (s) => ({ 0: '停用', 1: '启用', 2: '已过期' }[s] ?? s)
 const statusTag = (s) => ({ 0: 'info', 1: 'success', 2: 'warning' }[s] ?? 'info')
+
+const logText = (s) => ({ running: '运行中', success: '成功', failed: '失败' }[s] ?? s)
+const logTag = (s) => ({ running: 'primary', success: 'success', failed: 'danger' }[s] ?? 'info')
 
 async function load(p) {
   if (p) page.page = p
