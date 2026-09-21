@@ -31,8 +31,8 @@ bootstrap.InitDbStrategyProducer             bootstrap.InitDbStrategyConsumer + 
 
 - 任务负载 `Payload{Kind, ID}` 仅携带策略主键，消费端按 `Kind+ID` 回查配置库获取**执行时最新**配置（运行期改配置立即生效，无需重建调度器中的 payload）
 - 代价：worker 消费端必须能访问配置库（已在 `InitInstance` 传入 `dao.MysqlCli`），且每次执行前多一次主键查询
-- 入队使用固定 TaskID `dbstrategy:<ttl|retry>:<unkey>`，同一秒重复触发由 asynq 自动去重
-- `MaxRetry(0)`：失败不重试，下一轮 cron 触发即补偿
+- 入队不使用固定 TaskID：asynq 的 TaskID 语义是任务键存续期内不可重复入队，失败任务归档后任务键仍保留，后续触发将一直 `ErrTaskIDConflict` 导致策略永久停摆；重叠触发防护由消费端 Redis 执行锁承担
+- `MaxRetry(0)`：失败不重试（直接归档），下一轮 cron 触发即补偿
 
 ## 核心类型与使用方式
 
@@ -105,20 +105,22 @@ tasks.ConsumerClient()                              // 随后正常启动 asynq 
 
 与项目任务平台对齐，使用 asynq Scheduler 内建的 cron 解析：**仅支持标准 5 段表达式（分 时 日 月 周）** 及 `@every` 等描述符，最小粒度为分钟。
 
-### 并发与幂等保障（三层）
+### 并发与幂等保障
 
-1. **Scheduler 激活锁**：asynq Scheduler 自带 Redis 激活锁，多实例生产端同一时刻只有一个触发
-2. **固定 TaskID**：`dbstrategy:<任务名>` 入队去重，防止重复触发产生重复任务
-3. **执行锁（owner token + 续租）**：消费端执行前竞争 Redis 分布式锁，防止上一轮未跑完时下一轮/重复投递并发执行（补偿 asynq 缺失的 `SkipIfStillRunning` 语义）
+1. **执行锁（owner token + 续租）**：消费端执行前竞争 Redis 分布式锁，防止上一轮未跑完时下一轮/多副本重复投递并发执行（补偿 asynq 缺失的 `SkipIfStillRunning` 语义）
    - key 模板：`bs:dbauto:<ttl|retry>:<unkey>`，value 为 owner token（`主机名:随机串`），初始 TTL 300 秒
    - 执行期间由 watchdog 每 60 秒续租一次，且**仅在自己仍持有时**才延长 TTL（Lua `compare-and-pexpire`），支持任意长任务不丢锁
    - 释放使用 Lua `compare-and-delete`，只删自己持有的锁，不会误删超时后被其他实例抢占的锁
-   - 未抢到锁说明已有实例在跑，记 Warn 日志后返回 nil（不触发 asynq 重试）
+   - 未抢到锁（锁被其他实例持有）记 Warn 日志后返回 nil（不触发 asynq 重试）；**redis 异常与竞争失败三态区分**，异常时写一条 failed 策略日志并返回错误让任务 failed，避免 redis 抖动期间策略无声空转
+2. **不使用固定 TaskID**：入队不设 `asynq.TaskID`，避免失败归档后任务键残留导致后续触发永久 `ErrTaskIDConflict`；重复入队由上述执行锁兜底（未抢到锁直接跳过）
+
+> 注意：asynq Scheduler **没有**跨实例选主/激活锁（仅心跳上报），多副本部署 HTTP 服务时各副本都会按 cron 入队，需在部署层约束生产端仅单实例运行 `Regist()`。
 
 ### SQL 生成与执行
 
 - TTL：按 `column_type` 拼出 `DELETE FROM <table> WHERE <col> < 阈值 LIMIT n`，循环执行直到 `RowsAffected == 0`，每批间隔 1 秒，单批超时 60 秒，避免大事务
-- Retry：先 `SELECT count(*)` 探测，命中数为 0 直接返回；否则执行 `UPDATE <table> SET <set_fields> WHERE <时间窗口> AND <find_wh>`，超时 30 秒
+- Retry：先 `SELECT count(*)` 探测，命中数为 0 直接返回；否则按批循环执行 `UPDATE <table> SET <set_fields> WHERE <时间窗口> AND <find_wh> LIMIT n`（n 为配置的 `limit`，与 TTL 分批删除对齐，避免单条语句无上限更新），单批超时 30 秒、批间间隔 1 秒（均可被任务 ctx 取消），`RowsAffected < limit` 时停止；前端 SQL 预览（`ParseSql`）与执行使用同一生成逻辑，预览 SQL 即执行 SQL（含 LIMIT）
+- **ctx 全程透传**：asynq 任务 ctx（携带整体超时 `strategyTaskTimeout` = 30 分钟，入队时显式 `asynq.Timeout` 设置）透传到删除循环与所有 SQL：每批前检查 `ctx.Err()`、单批超时从任务 ctx 派生、批间等待可被取消；任务超时/取消时执行链立即中止，策略日志由 `Handle` 的 defer 闭环回写终态，不留永久 `running` 记录
 - 目标库连接为**每次执行时临时建立、执行完关闭**（`connDb` / `CloseDb`），DSN 出错日志经 `DsnMask` 脱敏密码
 
 ## 单元测试

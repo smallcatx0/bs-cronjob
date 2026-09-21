@@ -35,7 +35,7 @@ func Test_deleteTableRecord(t *testing.T) {
 	stg, err := NewDbStrategy(nil, nil)
 	assert.NoError(t, err)
 	stg.Debug = true
-	_, err = stg.deleteTableRecord(ttl)
+	_, err = stg.deleteTableRecord(context.Background(), ttl)
 	assert.NoError(t, err)
 }
 
@@ -61,7 +61,7 @@ func Test_updateTableRecord(t *testing.T) {
 	stg, err := NewDbStrategy(nil, nil)
 	assert.NoError(t, err)
 	stg.Debug = true
-	_, err = stg.updateTableRecord(dbRetry)
+	_, err = stg.updateTableRecord(context.Background(), dbRetry)
 	assert.NoError(t, err)
 }
 
@@ -92,6 +92,7 @@ func Test_cronFun(t *testing.T) {
 	assert.NoError(t, err)
 
 	// 直接入队一次策略任务, 验证 asynq 链路打通(payload 仅携带 ID, 消费端按 ID 查配置库)
+	// 与生产链路一致: 不设固定 TaskID(避免归档后任务键冲突), 显式设置整体超时
 	p := ttl
 	p.Dsn = test_db_dsn
 	p.UnKey = p.UnKey + ":cron"
@@ -100,7 +101,8 @@ func Test_cronFun(t *testing.T) {
 	_, err = stg.client.EnqueueContext(context.Background(),
 		asynq.NewTask(TypeTtlStrategy, b),
 		asynq.Queue(tasks.StrategyQueue()),
-		asynq.TaskID("dbstrategy:ttl:"+p.UnKey),
+		asynq.MaxRetry(0),
+		asynq.Timeout(strategyTaskTimeout),
 	)
 	assert.NoError(t, err)
 

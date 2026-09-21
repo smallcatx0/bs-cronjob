@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"cron-job/models/dao"
+	"cron-job/pkg/glog"
 )
 
 // 时间列类型(column_type)
@@ -64,8 +65,12 @@ func (t *TabledataRetry) SetStatus(id int64, status string) error {
 }
 
 // BuildRetrySqls 根据 Retry 配置生成 count 与 update 两条 SQL, 执行端与预览端共用,
-// now 为基准时间由调用方传入以便单测; column_type 非法时返回 error
-func BuildRetrySqls(tablename, columnName, columnType, findWh, setFields string, before, duration int64, now time.Time) (countSql, updateSql string, err error) {
+// now 为基准时间由调用方传入以便单测; update 语句带 LIMIT limit 分批更新(与 TTL 分批删除对齐),
+// column_type 非法或 limit 非正时返回 error
+func BuildRetrySqls(tablename, columnName, columnType, findWh, setFields string, before, duration, limit int64, now time.Time) (countSql, updateSql string, err error) {
+	if limit < 1 {
+		return "", "", fmt.Errorf("limit:%d 非法, 单次执行条数必须 >= 1", limit)
+	}
 	st := now.Add(-time.Second * time.Duration(before))
 	ed := st.Add(time.Second * time.Duration(duration))
 	var where string
@@ -81,14 +86,14 @@ func BuildRetrySqls(tablename, columnName, columnType, findWh, setFields string,
 	}
 	where += " AND " + findWh
 	countSql = fmt.Sprintf("SELECT count(*) c FROM `%s` WHERE %s", tablename, where)
-	updateSql = fmt.Sprintf("UPDATE `%s` SET %s WHERE %s", tablename, setFields, where)
+	updateSql = fmt.Sprintf("UPDATE `%s` SET %s WHERE %s LIMIT %d", tablename, setFields, where, limit)
 	return countSql, updateSql, nil
 }
 
-// ParseSql 根据 Retry 策略配置生成实际执行的更新 SQL, 供前端预览即将执行的语句;
-// 生成逻辑收敛在 BuildRetrySqls, column_type 非法时返回 error
+// ParseSql 根据 Retry 策略配置生成实际执行的更新 SQL(含 LIMIT 分批), 供前端预览即将执行的语句;
+// 生成逻辑收敛在 BuildRetrySqls, column_type 非法或 limit 非正时返回 error
 func (t *TabledataRetry) ParseSql() (string, error) {
-	_, updateSql, err := BuildRetrySqls(t.Tablename, t.ColumnName, t.ColumnType, t.FindWh, t.SetFields, t.Before, t.Duration, time.Now())
+	_, updateSql, err := BuildRetrySqls(t.Tablename, t.ColumnName, t.ColumnType, t.FindWh, t.SetFields, t.Before, t.Duration, t.Limit, time.Now())
 	return updateSql, err
 }
 
@@ -181,7 +186,10 @@ func StartStrategyLog(kind string, id int64, name string) *TabledataStrategyLog 
 		Status:       LogRunning,
 		StartedAt:    &now,
 	}
-	dao.MysqlCli.Create(jl)
+	if err := dao.MysqlCli.Create(jl).Error; err != nil {
+		// 写库失败不阻断执行, 但必须落错误日志, 避免"该跑没跑"在平台内不可观测
+		glog.Z().Error("[rds] 写策略running日志失败 kind=" + kind + fmt.Sprintf(" id=%d err=%s", id, err.Error()))
+	}
 	return jl
 }
 
@@ -196,5 +204,7 @@ func FinishStrategyLog(jl *TabledataStrategyLog, output string, runErr error) {
 	} else {
 		jl.Status = LogSuccess
 	}
-	dao.MysqlCli.Save(jl)
+	if err := dao.MysqlCli.Save(jl).Error; err != nil {
+		glog.Z().Error("[rds] 回写策略终态日志失败" + fmt.Sprintf(" log_id=%d status=%s err=%s", jl.ID, jl.Status, err.Error()))
+	}
 }

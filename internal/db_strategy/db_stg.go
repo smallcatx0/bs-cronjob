@@ -23,8 +23,13 @@ import (
 )
 
 const (
-	sqlTimeOut = 60 // sql执行超时
+	sqlTimeOut = 60 // 单批 sql 执行超时(秒)
 	LockKeyTpl = "bs:dbauto:%s"
+
+	// strategyTaskTimeout 单个策略任务的整体超时上限, 入队时通过 asynq.Timeout 显式设置
+	// (asynq 默认 30 分钟), 超时后 asynq 取消 ctx, 执行链需全程透传该 ctx 以便删除循环/SQL 被取消,
+	// 不再留下僵尸 goroutine 与永久 running 的策略日志; 单批超时(sqlTimeOut)须小于该值
+	strategyTaskTimeout = 30 * time.Minute
 
 	lockTTL           = 300 * time.Second // 锁有效期
 	lockRenewInterval = 60 * time.Second  // 执行期间续租间隔(约 lockTTL/5)
@@ -164,7 +169,7 @@ func (s *DbStrategy) Regist() {
 	}
 }
 
-// AddCronTask 按 cronspec(标准 5 段)注册策略任务到调度器, 触发时以固定 TaskID 入队。
+// AddCronTask 按 cronspec(标准 5 段)注册策略任务到调度器, 触发时入队策略任务。
 // 重复添加同名任务定为更新; spec 由 Scheduler.Register 校验(asynq 仅支持 5 段表达式)。
 // 注册失败时返回 error, 供运行期切换(online)调用方回滚状态。
 func (s *DbStrategy) AddCronTask(spec, taskType, funName string, p *Payload) error {
@@ -177,10 +182,13 @@ func (s *DbStrategy) AddCronTask(spec, taskType, funName string, p *Payload) err
 		return err
 	}
 	task := asynq.NewTask(taskType, b)
+	// 不设置固定 TaskID: asynq 的 TaskID 语义是任务键存续期内不可重复入队,
+	// 失败任务归档后任务键仍保留, 后续触发将一直 ErrTaskIDConflict 导致策略永久停摆;
+	// 重叠触发防护交由消费端 Redis 执行锁, 失败不重试则下一轮 cron 触发即补偿
 	opts := []asynq.Option{
 		asynq.Queue(tasks.StrategyQueue()), // 策略任务走独立队列, 与业务 job:exec 隔离, worker 可拆分消费
 		asynq.MaxRetry(0),
-		asynq.TaskID("dbstrategy:" + funName), // 固定 TaskID, 同秒重复触发自动去重
+		asynq.Timeout(strategyTaskTimeout), // 显式整体超时, 到期取消 ctx 使执行链可被优雅中断
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -246,8 +254,9 @@ func RegisterHandlers() {
 }
 
 // Handle asynq 任务执行入口(消费端): 按 payload 的 Kind+ID 查询配置库拿到最新策略配置,
-// 竞争 Redis 分布式锁(补偿 asynq 缺失的 SkipIfStillRunning)后分发到 TTL 清理 / Retry 重试
-func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) error {
+// 竞争 Redis 分布式锁(补偿 asynq 缺失的 SkipIfStillRunning)后分发到 TTL 清理 / Retry 重试。
+// asynq 传入的 ctx(携带整体超时/取消信号)全程透传到执行链, 任务被取消时策略日志同步闭环
+func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) (err error) {
 	var p Payload
 	if err := json.Unmarshal(t.Payload(), &p); err != nil {
 		return fmt.Errorf("%w: payload解析失败 %v", asynq.SkipRetry, err)
@@ -255,11 +264,14 @@ func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) error {
 	if s.db == nil {
 		return fmt.Errorf("%w: 配置库连接为空, 无法查询策略配置", asynq.SkipRetry)
 	}
+	if s.redisCli == nil {
+		return fmt.Errorf("%w: redis连接为空, 无法竞争策略执行锁", asynq.SkipRetry)
+	}
 	// 按 Kind+ID 查配置库: 取运行期最新策略配置(改配置立即生效), 并拿到锁唯一名、策略名与执行闭包
 	var (
 		unkey string
 		name  string
-		runFn func() (string, error)
+		runFn func(ctx context.Context) (string, error)
 	)
 	switch p.Kind {
 	case KindTtl:
@@ -268,20 +280,28 @@ func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) error {
 			s.Logger.Error(logPre + fmt.Sprintf("查询ttl策略失败 id=%d err=%s", p.ID, err.Error()))
 			return fmt.Errorf("%w: 查询ttl策略失败 id=%d err=%v", asynq.SkipRetry, p.ID, err)
 		}
-		unkey, name, runFn = cfg.UnKey, cfg.UnKey, func() (string, error) { return s.deleteTableRecord(*cfg) }
+		unkey, name, runFn = cfg.UnKey, cfg.UnKey, func(ctx context.Context) (string, error) { return s.deleteTableRecord(ctx, *cfg) }
 	case KindRetry:
 		cfg, err := s.retry.GetByID(p.ID)
 		if err != nil {
 			s.Logger.Error(logPre + fmt.Sprintf("查询retry策略失败 id=%d err=%s", p.ID, err.Error()))
 			return fmt.Errorf("%w: 查询retry策略失败 id=%d err=%v", asynq.SkipRetry, p.ID, err)
 		}
-		unkey, name, runFn = cfg.Unkey, cfg.Unkey, func() (string, error) { return s.updateTableRecord(*cfg) }
+		unkey, name, runFn = cfg.Unkey, cfg.Unkey, func(ctx context.Context) (string, error) { return s.updateTableRecord(ctx, *cfg) }
 	default:
 		return fmt.Errorf("%w: 未知策略类型 kind=%s", asynq.SkipRetry, p.Kind)
 	}
 	funName := p.Kind + ":" + unkey
-	// 竞争分布式锁(带 owner token), 未抢到说明其他实例正在执行, 记日志后退出且不触发重试
-	token, ok := s.acquireLock(funName)
+	// 竞争分布式锁(带 owner token): 三态区分——抢到锁执行; 竞争失败说明其他实例正在执行, 跳过且不触发重试;
+	// redis 异常不能当作"未抢到锁"静默跳过(否则 redis 抖动期间策略无声空转), 返回错误让任务 failed
+	token, ok, lerr := s.acquireLock(ctx, funName)
+	if lerr != nil {
+		s.Logger.Error(logPre + fmt.Sprintf("竞争 %s 任务锁异常, err=%s", funName, lerr.Error()))
+		// 同步写一条 failed 策略日志, 保证审计可见(下轮 cron 触发即补偿)
+		jl := rds.StartStrategyLog(p.Kind, p.ID, name)
+		rds.FinishStrategyLog(jl, "", lerr)
+		return lerr
+	}
 	if !ok {
 		s.Logger.Warn(logPre + fmt.Sprintf("%s 未抢到 %s 任务锁, 跳过执行", conf.HostName(), funName))
 		return nil
@@ -290,10 +310,20 @@ func (s *DbStrategy) Handle(ctx context.Context, t *asynq.Task) error {
 	defer s.releaseLock(funName, token)
 	defer s.startLockRenew(funName, token)()
 
-	// 参照 tasks 包 JobLog 机制: 执行开始写 running 日志, 结束回写结果
+	// 参照 tasks 包 JobLog 机制: 执行开始写 running 日志, 结束回写结果;
+	// 用命名返回值 + defer 闭环: 任务超时被取消/执行 panic 时也能回写终态, 不留永久 running 记录
 	jl := rds.StartStrategyLog(p.Kind, p.ID, name)
-	output, err := runFn()
-	rds.FinishStrategyLog(jl, output, err)
+	var output string
+	defer func() {
+		if r := recover(); r != nil {
+			output, err = "", fmt.Errorf("panic: %v", r)
+			s.Logger.Error(logPre + fmt.Sprintf("%s 执行panic: %v", funName, r))
+		}
+		if jl != nil {
+			rds.FinishStrategyLog(jl, output, err)
+		}
+	}()
+	output, err = runFn(ctx)
 	return err
 }
 
@@ -306,20 +336,21 @@ func newLockToken() string {
 	return fmt.Sprintf("%s:%s", conf.HostName(), hex.EncodeToString(b))
 }
 
-// acquireLock 竞争分布式锁, 成功返回 owner token; 竞争失败返回 ("", false)
-func (s *DbStrategy) acquireLock(funcName string) (string, bool) {
+// acquireLock 竞争分布式锁, 三态返回:
+//   - 抢锁成功: (token, true, nil)
+//   - 锁被其他实例持有: ("", false, nil), 调用方应跳过执行
+//   - redis 异常: ("", false, err), 调用方应判定任务失败, 不可静默跳过
+func (s *DbStrategy) acquireLock(ctx context.Context, funcName string) (string, bool, error) {
 	key := fmt.Sprintf(LockKeyTpl, funcName)
 	token := newLockToken()
-	ok := s.redisCli.SetNX(
-		context.Background(),
-		key,
-		token,
-		lockTTL,
-	).Val()
-	if !ok {
-		return "", false
+	ok, err := s.redisCli.SetNX(ctx, key, token, lockTTL).Result()
+	if err != nil {
+		return "", false, fmt.Errorf("抢锁失败 redis_key=%s: %w", key, err)
 	}
-	return token, true
+	if !ok {
+		return "", false, nil
+	}
+	return token, true, nil
 }
 
 // releaseLock 释放锁, 仅删除自己持有的锁(Lua compare-and-delete)
@@ -367,8 +398,13 @@ func (s *DbStrategy) startLockRenew(funcName, token string) (stop func()) {
 	return func() { once.Do(func() { close(done) }) }
 }
 
-// 数据库删除逻辑, 返回执行摘要供策略日志记录
-func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) (string, error) {
+// withBatchTimeout 从任务 ctx 派生单批 SQL 执行超时: 任务整体取消与单批超时均能中断执行
+func withBatchTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, d)
+}
+
+// 数据库删除逻辑, 返回执行摘要供策略日志记录; ctx 为 asynq 任务 ctx, 取消时中止分批循环
+func (s *DbStrategy) deleteTableRecord(ctx context.Context, cfg rds.TabledataTtl) (string, error) {
 	db, err := dao.ConnMysql(cfg.Dsn, true)
 	if err != nil {
 		s.Logger.Error(logPre + fmt.Sprintf(
@@ -388,9 +424,10 @@ func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) (string, error) {
 		return "", err
 	}
 	deletedNum := int64(0)
-	for {
+	// 每批前检查任务 ctx: 整体超时/取消时立即停止, 不留下继续删数据的僵尸 goroutine
+	for ctx.Err() == nil {
 		rows, err := func() (int64, error) {
-			timeout, cancel := context.WithTimeout(context.Background(), time.Second*sqlTimeOut)
+			timeout, cancel := withBatchTimeout(ctx, time.Second*sqlTimeOut)
 			defer cancel()
 			res := db.WithContext(timeout).Exec(sql)
 			return res.RowsAffected, res.Error
@@ -406,7 +443,18 @@ func (s *DbStrategy) deleteTableRecord(cfg rds.TabledataTtl) (string, error) {
 		if rows == 0 {
 			break
 		}
-		time.Sleep(time.Second)
+		// 批间等待也可被取消, 避免任务超时后仍卡在 Sleep
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		s.Logger.Warn(logPre + fmt.Sprintf(
+			"表(%s.%s) 删除任务被取消, 已删除%d条, err=%s",
+			cfg.DbName, cfg.Tablename, deletedNum, err.Error(),
+		))
+		return "", err
 	}
 	cost := time.Since(st)
 
@@ -422,7 +470,7 @@ type CountRes struct {
 	Count int64 `gorm:"column:c"`
 }
 
-func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) (string, error) {
+func (s *DbStrategy) updateTableRecord(ctx context.Context, cfg rds.TabledataRetry) (string, error) {
 	db, err := dao.ConnMysql(cfg.Dsn, true)
 	if err != nil {
 		s.Logger.Error(logPre + fmt.Sprintf(
@@ -437,14 +485,14 @@ func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) (string, error) {
 	defer dao.CloseTmpMysql(db)
 	curr := time.Now()
 	findSql, updateSql, err := rds.BuildRetrySqls(cfg.Tablename, cfg.ColumnName, cfg.ColumnType,
-		cfg.FindWh, cfg.SetFields, cfg.Before, cfg.Duration, curr)
+		cfg.FindWh, cfg.SetFields, cfg.Before, cfg.Duration, cfg.Limit, curr)
 	if err != nil {
 		return "", err
 	}
 	s.Logger.Debug(logPre + "findSql: " + findSql)
 	s.Logger.Debug(logPre + "updateSql: " + updateSql)
 	res := CountRes{}
-	err = db.Raw(findSql).First(&res).Error
+	err = db.WithContext(ctx).Raw(findSql).First(&res).Error
 	if err != nil {
 		s.Logger.Error(logPre + fmt.Sprintf(
 			"表(%s.%s); sql=%s, err=%s",
@@ -455,23 +503,43 @@ func (s *DbStrategy) updateTableRecord(cfg rds.TabledataRetry) (string, error) {
 	if res.Count == 0 {
 		// 不需要更新数据
 		dt := time.Since(curr)
-		out := fmt.Sprintf("表(%s.%s) sql=%s 需无需更新，耗时%dms",
+		out := fmt.Sprintf("表(%s.%s) sql=%s 无需更新，耗时%dms",
 			cfg.DbName, cfg.Tablename, findSql, dt/time.Millisecond)
 		s.Logger.Info(logPre + out)
 		return out, nil
 	}
+	// 分批 UPDATE(每批 LIMIT cfg.Limit, 与 TTL 分批删除对齐), 避免单条语句无上限更新导致
+	// 长事务/锁扩散/binlog 暴涨; 每批前检查任务 ctx, 批间间隔 1 秒可被取消
 	updatedNum := int64(0)
-	err = func() error {
-		timeout, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		res := db.WithContext(timeout).Exec(updateSql)
-		updatedNum = res.RowsAffected
-		return res.Error
-	}()
-	if err != nil {
-		s.Logger.Error(logPre + fmt.Sprintf(
-			"表(%s.%s); sql=%s, err=%s",
-			cfg.DbName, cfg.Tablename, findSql, err.Error(),
+	for ctx.Err() == nil {
+		rows, err := func() (int64, error) {
+			// 从任务 ctx 派生单批 UPDATE 超时, 任务整体取消与单批超时均能中断执行
+			timeout, cancel := withBatchTimeout(ctx, 30*time.Second)
+			defer cancel()
+			res := db.WithContext(timeout).Exec(updateSql)
+			return res.RowsAffected, res.Error
+		}()
+		if err != nil {
+			s.Logger.Error(logPre + fmt.Sprintf(
+				"表(%s.%s); sql=%s, err=%s",
+				cfg.DbName, cfg.Tablename, updateSql, err.Error(),
+			))
+			return "", err
+		}
+		updatedNum += rows
+		// RowsAffected < limit 说明命中行已更新完, 停止分批
+		if rows < cfg.Limit {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		s.Logger.Warn(logPre + fmt.Sprintf(
+			"表(%s.%s) 重试任务被取消, 已更新%d条, err=%s",
+			cfg.DbName, cfg.Tablename, updatedNum, err.Error(),
 		))
 		return "", err
 	}
