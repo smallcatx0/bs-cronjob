@@ -19,6 +19,12 @@ shell:
     - echo
     # - /data/scripts/backup.sh
 
+# 预定义告警机器人群(任务 alarm 中 type=ding_alarm 按 name 引用, worker 侧供发送)
+ding_robots:
+  - name: 运维告警群
+    webhook: 'https://oapi.dingtalk.com/robot/send?access_token=xxx'
+    secret: 'SECxxx'
+
 # 主数据库
 mysql:
   debug: true

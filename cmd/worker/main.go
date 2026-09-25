@@ -17,6 +17,7 @@ func main() {
 	// 读取配置文件
 	bootstrap.InitConf(&bootstrap.Param.C)
 	bootstrap.InitLog()
+	bootstrap.InitDingRobots()
 	bootstrap.InitDB()
 	// 仅启动 asynq 消费端(server),监听队列并执行任务
 	bootstrap.InitConsumer()

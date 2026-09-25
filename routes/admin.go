@@ -22,6 +22,7 @@ func registAdmin(r *gin.Engine) {
 
 	jobRout.POST("/log", jobs.Log)
 	jobRout.GET("/gofuncs", jobs.GoFuncs)
+	jobRout.GET("/robots", jobs.Robots)
 
 	// db_strategy 表数据维护策略配置(TTL 清理 / Retry 重试)
 	td := v1.Tabledata{}

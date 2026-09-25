@@ -13,6 +13,12 @@ asynq:
   job_queue: cron_job # 业务 job:exec 队列(与 worker.yaml 保持一致)
   strategy_queue: dbstrategy # db_strategy 策略任务(ttl/retry)队列(与 worker.yaml 保持一致)
 
+# 预定义告警机器人群(任务 alarm 中 type=ding_alarm 按 name 引用, app 侧供下拉枚举)
+ding_robots:
+  - name: 运维告警群
+    webhook: 'https://oapi.dingtalk.com/robot/send?access_token=xxx'
+    secret: 'SECxxx'
+
 # 主数据库
 mysql:
   debug: true

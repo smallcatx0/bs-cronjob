@@ -60,6 +60,9 @@
         
       </el-table-column>
       <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
+      <el-table-column label="告警" width="110" show-overflow-tooltip>
+        <template #default="{ row }">{{ alarmText(row) }}</template>
+      </el-table-column>
       <el-table-column label="任务日志" width="80">
         <template #default="{ row }"><el-button size="small" link type="primary" @click="showLogs(row)">查看</el-button></template>
       </el-table-column>
@@ -137,6 +140,22 @@
           <el-input v-model="gofuncForm.args" type="textarea" :rows="2" style="margin-top: 6px" placeholder='args JSON(可选), 如 {"name":"x"}' />
         </el-form-item>
 
+        <el-form-item label="告警">
+          <el-select v-model="alarmSel" placeholder="不告警" style="width: 100%">
+            <el-option label="不告警" value="" />
+            <el-option v-for="r in dingRobots" :key="r" :label="r" :value="r" />
+            <el-option label="自定义机器人" value="custom" />
+          </el-select>
+        </el-form-item>
+        <template v-if="alarmSel === 'custom'">
+          <el-form-item label="Webhook">
+            <el-input v-model="alarmForm.webhook" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." />
+          </el-form-item>
+          <el-form-item label="加签密钥">
+            <el-input v-model="alarmForm.secret" placeholder="SEC..." />
+          </el-form-item>
+        </template>
+
         <el-form-item label="超时(秒)">
           <el-input-number v-model="form.timeout_sec" :min="1" :max="86400" />
         </el-form-item>
@@ -208,7 +227,7 @@
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listJobs, addJob, updateJob, deleteJob, runJob, toggleJob, listGoFuncs, listLogs } from '../api'
+import { listJobs, addJob, updateJob, deleteJob, runJob, toggleJob, listGoFuncs, listDingRobots, listLogs } from '../api'
 import { cronToText } from '../utils/cron'
 import { fmtTime } from '../utils/timeParser'
 
@@ -225,6 +244,13 @@ const httpForm = reactive({ method: 'GET', url: '', body: '' })
 const shellForm = reactive({ cmd: '', args: '' })
 const gofuncForm = reactive({ func: '', args: '' })
 const gofuncs = ref([])
+
+// 告警配置
+const ALARM_SKIP = '__skip__'
+const dingRobots = ref([])
+const alarmSel = ref('')
+const alarmForm = reactive({ webhook: '', secret: '' })
+let alarmMaskedCustom = false
 
 // cron 快捷输入(与 asynq 一致的标准 5 段: 分 时 日 月 周)
 const quickCrons = [
@@ -335,8 +361,51 @@ function openEdit(row) {
       if (row.type === 'gofunc') Object.assign(gofuncForm, { func: p.func || '', args: p.args ? JSON.stringify(p.args) : '' })
     } catch { /* ignore */ }
   }
+  // 告警配置回显
+  alarmSel.value = ''
+  alarmForm.webhook = ''; alarmForm.secret = ''
+  alarmMaskedCustom = false
+  if (row?.alarm) {
+    try {
+      const a = JSON.parse(row.alarm)
+      if (a && a.type === 'ding_alarm') {
+        if (a.name) {
+          alarmSel.value = a.name
+        } else if (a.webhook) {
+          alarmSel.value = 'custom'
+          alarmForm.webhook = a.webhook
+          alarmForm.secret = a.secret || ''
+          alarmMaskedCustom = String(a.webhook).includes('******')
+        }
+      }
+    } catch { /* ignore */ }
+  }
+  listDingRobots().then((d) => (dingRobots.value = d || [])).catch(() => {})
   listGoFuncs().then((d) => (gofuncs.value = d || [])).catch(() => {})
   editVisible.value = true
+}
+
+// 组装告警 JSON; 返回 ALARM_SKIP 表示回显的脱敏自定义且未改动, 提交时跳过
+function buildAlarm() {
+  if (alarmSel.value === '') return ''
+  if (alarmSel.value === 'custom') {
+    if (alarmMaskedCustom && String(alarmForm.webhook).includes('******')) return ALARM_SKIP
+    return JSON.stringify({ type: 'ding_alarm', webhook: alarmForm.webhook, secret: alarmForm.secret })
+  }
+  return JSON.stringify({ type: 'ding_alarm', name: alarmSel.value })
+}
+
+// 列表告警列展示文案
+function alarmText(row) {
+  if (!row.alarm) return '-'
+  try {
+    const a = JSON.parse(row.alarm)
+    if (a && a.type === 'ding_alarm') {
+      if (a.name) return a.name
+      if (a.webhook) return '自定义'
+    }
+  } catch { /* ignore */ }
+  return '-'
 }
 
 function buildPayload() {
@@ -359,6 +428,8 @@ async function doSave() {
   let payload
   try { payload = buildPayload() } catch (e) { ElMessage.error(e.message); return }
   const body = { name: form.name, description: form.description, type: form.type, schedule_type: form.schedule_type, cron_expr: form.cron_expr, execute_at: form.execute_at, payload, timeout_sec: form.timeout_sec }
+  const alarm = buildAlarm()
+  if (alarm !== ALARM_SKIP) body.alarm = alarm
   saving.value = true
   try {
     if (form.id) await updateJob({ id: form.id, ...body })

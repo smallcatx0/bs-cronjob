@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS `bs_job` (
   `execute_at` DATETIME NULL COMMENT 'once任务执行时间',
   `payload` TEXT COMMENT 'JSON配置',
   `timeout_sec` INT NOT NULL DEFAULT 300,
+  `alarm` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '告警配置JSON: 空=关闭; {"type":"ding_alarm","name":..}预定义 / {"type":"ding_alarm","webhook":..,"secret":..}自定义',
   `task_id` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'asynq待执行任务ID',
   `next_run` DATETIME NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

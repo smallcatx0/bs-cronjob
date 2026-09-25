@@ -20,6 +20,7 @@ func main() {
 	// 读取配置文件
 	bootstrap.InitConf(&bootstrap.Param.C)
 	bootstrap.InitLog()
+	bootstrap.InitDingRobots()
 	bootstrap.InitDB()
 	// 初始化 任务调度生成端
 	bootstrap.InitProducer()

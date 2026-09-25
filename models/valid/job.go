@@ -1,9 +1,11 @@
 package valid
 
 import (
+	"cron-job/internal/conf"
 	"cron-job/middleware/resp"
 	"cron-job/models/dao/rds"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -25,6 +27,42 @@ func CheckCronExpr(expr string) error {
 	return nil
 }
 
+// validateAlarm 校验告警配置(空跳过): 解析 JSON 并按 type 分发, 预定义需命中配置机器人, 自定义需合法 webhook+secret
+// 命中脱敏占位的自定义值放行(由 controller Update 跳过覆盖, 避免前端回传脱敏值覆盖真实配置)
+func validateAlarm(s string) error {
+	if s == "" {
+		return nil
+	}
+	c, err := rds.ParseAlarm(s)
+	if err != nil {
+		return resp.ParamInValid("alarm 格式错误: " + err.Error())
+	}
+	switch c.Type {
+	case rds.AlarmTypeDing:
+		if c.Name != "" && c.Webhook == "" {
+			if !conf.HasDingRobot(c.Name) {
+				return resp.ParamInValid("alarm 机器人不存在: " + c.Name)
+			}
+			return nil
+		}
+		if c.Webhook != "" {
+			if rds.IsAlarmMasked(c) {
+				return nil // 脱敏占位, 保留原值
+			}
+			if !strings.HasPrefix(c.Webhook, "https://oapi.dingtalk.com/robot/send") {
+				return resp.ParamInValid("alarm webhook 非法")
+			}
+			if c.Secret == "" {
+				return resp.ParamInValid("alarm secret 必填")
+			}
+			return nil
+		}
+		return resp.ParamInValid("alarm 需配置 name 或 webhook")
+	default:
+		return resp.ParamInValid("alarm type 不支持: " + c.Type)
+	}
+}
+
 type JobQuery struct {
 	Name         string `form:"name" binding:"omitempty,max=128"`
 	Type         string `form:"type" binding:"omitempty,oneof=http shell gofunc"`
@@ -41,6 +79,7 @@ type JobAdd struct {
 	ExecuteAt    string `json:"execute_at" binding:"omitempty,datetime=2006-01-02 15:04:05"`
 	Payload      string `json:"payload" binding:"omitempty"`
 	TimeoutSec   int    `json:"timeout_sec" binding:"omitempty,min=1"`
+	Alarm        string `json:"alarm" binding:"omitempty,max=512"`
 	// ---
 	ExecuteAtTime *time.Time `json:"-"` // 仅用于 once 任务, 解析 execute_at 后的时间
 }
@@ -61,7 +100,7 @@ func (p *JobAdd) Valid() error {
 		}
 		p.ExecuteAtTime = &executeAt
 	}
-	return nil
+	return validateAlarm(p.Alarm)
 }
 
 type JobUpdate struct {
@@ -71,6 +110,7 @@ type JobUpdate struct {
 	ExecuteAt   string `json:"execute_at" binding:"omitempty,datetime=2006-01-02 15:04:05"`
 	Payload     string `json:"payload" binding:"omitempty"`
 	TimeoutSec  int    `json:"timeout_sec" binding:"omitempty,min=1"`
+	Alarm       string `json:"alarm" binding:"omitempty,max=512"`
 	// ---
 	ExecuteAtTime *time.Time `json:"-"` // 仅用于 once 任务, 解析 execute_at 后的时间
 }
@@ -88,7 +128,7 @@ func (p *JobUpdate) Valid() error {
 		}
 		p.ExecuteAtTime = &executeAt
 	}
-	return nil
+	return validateAlarm(p.Alarm)
 }
 
 type JobLogQuery struct {

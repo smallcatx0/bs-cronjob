@@ -3,6 +3,7 @@ package v1
 import (
 	"time"
 
+	"cron-job/internal/conf"
 	"cron-job/internal/tasks"
 	"cron-job/middleware/resp"
 	"cron-job/models/dao"
@@ -14,6 +15,13 @@ import (
 )
 
 type Jobs struct{}
+
+// maskJobAlarm 对任务告警配置脱敏后返回(避免自定义 webhook/secret 泄漏)
+func maskJobAlarm(j *rds.Job) {
+	if j != nil {
+		j.Alarm = rds.MaskAlarm(j.Alarm)
+	}
+}
 
 // List 列出所有 定时任务
 func (Jobs) List(c *gin.Context) {
@@ -73,6 +81,7 @@ func (Jobs) List(c *gin.Context) {
 	out := make([]row, 0, len(jobs))
 	for _, j := range jobs {
 		r := row{Job: j}
+		maskJobAlarm(&r.Job)
 		if lb, ok := lastLogs[j.ID]; ok {
 			brief := lb
 			r.LastLog = &brief
@@ -99,6 +108,7 @@ func (Jobs) Add(c *gin.Context) {
 		CronExpr:     p.CronExpr,
 		Payload:      p.Payload,
 		TimeoutSec:   p.TimeoutSec,
+		Alarm:        p.Alarm,
 		CreatedAt:    time.Now(),
 	}
 	if job.TimeoutSec <= 0 {
@@ -113,6 +123,7 @@ func (Jobs) Add(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	maskJobAlarm(&job)
 	resp.Succ(c, job)
 }
 
@@ -131,6 +142,7 @@ func (Jobs) Detail(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	maskJobAlarm(job)
 	resp.Succ(c, job)
 }
 
@@ -176,6 +188,12 @@ func (Jobs) Update(c *gin.Context) {
 		}
 		updates["execute_at"] = p.ExecuteAtTime
 	}
+	if p.Alarm != "" {
+		// 前端回传脱敏占位时跳过, 避免覆盖真实自定义配置
+		if ac, aerr := rds.ParseAlarm(p.Alarm); aerr != nil || !rds.IsAlarmMasked(ac) {
+			updates["alarm"] = p.Alarm
+		}
+	}
 
 	if len(updates) > 0 {
 		err = dao.MysqlCli.Model(&rds.Job{}).Where("id = ?", job.ID).Updates(updates).Error
@@ -185,6 +203,7 @@ func (Jobs) Update(c *gin.Context) {
 		}
 	}
 	job, _ = rds.GetJob(job.ID)
+	maskJobAlarm(job)
 	resp.Succ(c, job)
 }
 
@@ -214,6 +233,7 @@ func (Jobs) Delete(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	maskJobAlarm(job)
 	resp.Succ(c, job)
 }
 
@@ -237,6 +257,7 @@ func (Jobs) Run(c *gin.Context) {
 		resp.Fail(c, resp.ParamInValid("任务入队失败", err.Error()))
 		return
 	}
+	maskJobAlarm(job)
 	resp.Succ(c, job)
 }
 
@@ -257,6 +278,7 @@ func (Jobs) Toggle(c *gin.Context) {
 		return
 	}
 	if job.Status == p.Status {
+		maskJobAlarm(job)
 		resp.Succ(c, job)
 		return
 	}
@@ -310,6 +332,7 @@ func (Jobs) Toggle(c *gin.Context) {
 		_ = rds.SetNextRun(job.ID, nil)
 	}
 	job, _ = rds.GetJob(job.ID)
+	maskJobAlarm(job)
 	resp.Succ(c, job)
 }
 
@@ -358,4 +381,9 @@ func (Jobs) Log(c *gin.Context) {
 // GoFuncs 已注册的 go func 任务名(供前端下拉)
 func (Jobs) GoFuncs(c *gin.Context) {
 	resp.Succ(c, tasks.RegisteredFuncs())
+}
+
+// Robots 预定义告警机器人名称列表(供前端下拉, 不暴露 webhook/secret)
+func (Jobs) Robots(c *gin.Context) {
+	resp.Succ(c, conf.DingRobotNames())
 }

@@ -359,9 +359,45 @@ func HandleJobExec(ctx context.Context, t *asynq.Task) error {
 	if err != nil {
 		glog.Z().Warn(fmt.Sprintf("[tasks] job fail, id=%d name=%s trigger=%s err=%v",
 			job.ID, job.Name, p.TriggerType, err))
+		sendAlarm(job, p.TriggerType, err)
 		return err
 	}
 	return nil
+}
+
+// sendAlarm 任务执行失败时按 alarm 配置推送告警(当前仅 ding_alarm), 发送失败仅记日志不影响任务返回
+func sendAlarm(job *rds.Job, triggerType string, runErr error) {
+	if job.Alarm == "" {
+		return
+	}
+	c, err := rds.ParseAlarm(job.Alarm)
+	if err != nil {
+		glog.Z().Error(fmt.Sprintf("[tasks] parse alarm fail, id=%d alarm=%s err=%v", job.ID, job.Alarm, err))
+		return
+	}
+	switch c.Type {
+	case rds.AlarmTypeDing:
+		webhook, secret := c.Webhook, c.Secret
+		if c.Name != "" {
+			wh, sec, ok := conf.LookupDingRobot(c.Name)
+			if !ok || wh == "" {
+				glog.Z().Warn(fmt.Sprintf("[tasks] ding robot not found, id=%d name=%s", job.ID, c.Name))
+				return
+			}
+			webhook, secret = wh, sec
+		}
+		if webhook == "" {
+			return
+		}
+		title := fmt.Sprintf("【定时任务失败】%s", job.Name)
+		content := fmt.Sprintf("**任务名称**: %s\n\n**任务ID**: %d\n\n**任务类型**: %s\n\n**触发方式**: %s\n\n**错误信息**: %v\n\n**时间**: %s",
+			job.Name, job.ID, job.Type, triggerType, runErr, time.Now().Format("2006-01-02 15:04:05"))
+		if serr := glog.DingAlarmNew(webhook, secret).SendMd(title, content); serr != nil {
+			glog.Z().Error(fmt.Sprintf("[tasks] send ding alarm fail, id=%d err=%v", job.ID, serr))
+		}
+	default:
+		glog.Z().Warn(fmt.Sprintf("[tasks] unsupported alarm type, id=%d type=%s", job.ID, c.Type))
+	}
 }
 
 // zapLogger 将 asynq 日志接到 zap

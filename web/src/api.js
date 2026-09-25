@@ -9,6 +9,7 @@ export const runJob = (id) => admin.post('/jobs/run', { id })
 export const toggleJob = (id, status) => admin.post('/jobs/toggle', { id, status })
 export const listLogs = (params) => admin.post('/jobs/log?' + new URLSearchParams(params))
 export const listGoFuncs = () => admin.get('/jobs/gofuncs')
+export const listDingRobots = () => admin.get('/jobs/robots')
 
 export const listTtl = (params) => admin.get('/tabledata/ttl/list', { params })
 export const addTtl = (data) => admin.post('/tabledata/ttl/add', data)

@@ -44,6 +44,11 @@ func InitDB() {
 	dao.MustInitRedis()
 }
 
+// InitDingRobots 缓存预定义告警机器人配置(需在 InitConf 之后调用)
+func InitDingRobots() {
+	conf.InitDingRobots()
+}
+
 // InitProducer 初始化 asynq 生产端(client + scheduler),HTTP 服务侧使用
 func InitProducer() {
 	tasks.InitClient()

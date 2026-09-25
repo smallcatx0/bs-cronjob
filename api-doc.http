@@ -39,3 +39,6 @@ POST {{baseurl}}/admin/tabledata/parsesql
   "kind": "ttl"
 }
 
+
+### 预定义告警机器人名称列表(供前端下拉, 不暴露 webhook/secret)
+GET {{baseurl}}/admin/jobs/robots
