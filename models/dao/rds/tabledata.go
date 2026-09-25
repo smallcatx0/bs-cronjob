@@ -105,6 +105,7 @@ type TabledataTtl struct {
 	Tablename  string `gorm:"column:table_name" json:"table_name"`                          // 表名
 	ColumnName string `gorm:"column:column_name" json:"column_name"`                        // 依据字段名
 	ColumnType string `gorm:"column:column_type" json:"column_type"`                        // 依据字段类型
+	FindWh     string `gorm:"column:find_wh" json:"find_wh"`                                // 附加筛选条件(可选), 如 `status`=0
 	TtlValue   int64  `gorm:"column:ttl_value" json:"ttl_value"`                            // TTL过期时间
 	Limit      int64  `gorm:"column:limit" json:"limit"`                                    // 一次执行条数
 	Spec       string `gorm:"column:spec" json:"spec"`                                      // cron表达式
@@ -138,8 +139,9 @@ func (t *TabledataTtl) SetStatus(id int64, status string) error {
 }
 
 // BuildTtlDeleteSql 根据 TTL 配置生成删除 SQL, 执行端与预览端共用,
-// cutoff 为过期界限时间由调用方传入以便单测; column_type 非法时返回 error
-func BuildTtlDeleteSql(tablename, columnName, columnType string, cutoff time.Time, limit int64) (string, error) {
+// cutoff 为过期界限时间由调用方传入以便单测; findWh 为时间界限之外追加的可选筛选条件, 非空时拼到 WHERE;
+// column_type 非法时返回 error
+func BuildTtlDeleteSql(tablename, columnName, columnType, findWh string, cutoff time.Time, limit int64) (string, error) {
 	var where string
 	switch columnType {
 	case ColumType_Unix:
@@ -150,6 +152,9 @@ func BuildTtlDeleteSql(tablename, columnName, columnType string, cutoff time.Tim
 		return "", fmt.Errorf("column_type:%s 不支持，可选：%s/%s/%s",
 			columnType, ColumType_Unix, ColumType_Timestamp, ColumType_Datetime)
 	}
+	if findWh != "" {
+		where += " AND " + findWh
+	}
 	return fmt.Sprintf("DELETE FROM `%s` WHERE %s LIMIT %d", tablename, where, limit), nil
 }
 
@@ -157,7 +162,7 @@ func BuildTtlDeleteSql(tablename, columnName, columnType string, cutoff time.Tim
 // 生成逻辑收敛在 BuildTtlDeleteSql, column_type 非法时返回 error
 func (t *TabledataTtl) ParseSql() (string, error) {
 	cutoff := time.Now().Add(-time.Second * time.Duration(t.TtlValue))
-	return BuildTtlDeleteSql(t.Tablename, t.ColumnName, t.ColumnType, cutoff, t.Limit)
+	return BuildTtlDeleteSql(t.Tablename, t.ColumnName, t.ColumnType, t.FindWh, cutoff, t.Limit)
 }
 
 // TabledataStrategyLog TTL/Retry 策略执行日志, 复用 JobLog 状态(running/success/failed)

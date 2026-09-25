@@ -99,6 +99,9 @@
             <el-radio-button value="datetime">datetime</el-radio-button>
           </el-radio-group>
         </el-form-item>
+        <el-form-item label="筛选条件">
+          <el-input v-model="form.find_wh" type="textarea" :rows="2" placeholder="时间界限之外追加的 WHERE 条件, 可选, 如: status = 0" />
+        </el-form-item>
         <el-form-item label="TTL(秒)" required>
           <el-input-number v-model="form.ttl_value" :min="1" />
           <span class="tip">超过该时长的数据将被清理, 单位秒</span>
@@ -188,7 +191,7 @@ const page = reactive({ page: 1, limit: 20, total: 0 })
 const query = reactive({ unkey: '', db_name: '', table_name: '', status: '' })
 
 const editVisible = ref(false)
-const form = reactive({ id: null, unkey: '', dsn: '', db_name: '', table_name: '', column_name: '', column_type: 'datetime', ttl_value: 3600, limit: 1000, spec: '', desc: '' })
+const form = reactive({ id: null, unkey: '', dsn: '', db_name: '', table_name: '', column_name: '', column_type: 'datetime', find_wh: '', ttl_value: 3600, limit: 1000, spec: '', desc: '' })
 // 记录编辑时后端返回的脱敏 dsn, 用于判断用户是否修改了该字段
 const originalDsn = ref('')
 
@@ -238,8 +241,8 @@ async function load(p) {
 
 function openEdit(row) {
   Object.assign(form, row
-    ? { id: row.id, unkey: row.unkey, dsn: row.dsn, db_name: row.db_name, table_name: row.table_name, column_name: row.column_name, column_type: row.column_type, ttl_value: row.ttl_value, limit: row.limit, spec: row.spec, desc: row.desc || '' }
-    : { id: null, unkey: '', dsn: '', db_name: '', table_name: '', column_name: '', column_type: 'datetime', ttl_value: 3600, limit: 1000, spec: '', desc: '' })
+    ? { id: row.id, unkey: row.unkey, dsn: row.dsn, db_name: row.db_name, table_name: row.table_name, column_name: row.column_name, column_type: row.column_type, find_wh: row.find_wh || '', ttl_value: row.ttl_value, limit: row.limit, spec: row.spec, desc: row.desc || '' }
+    : { id: null, unkey: '', dsn: '', db_name: '', table_name: '', column_name: '', column_type: 'datetime', find_wh: '', ttl_value: 3600, limit: 1000, spec: '', desc: '' })
   originalDsn.value = row ? row.dsn : ''
   editVisible.value = true
 }
@@ -255,6 +258,7 @@ async function doSave() {
         table_name: form.table_name,
         column_name: form.column_name,
         column_type: form.column_type,
+        find_wh: form.find_wh,
         ttl_value: form.ttl_value,
         limit: form.limit,
         desc: form.desc,
@@ -272,6 +276,7 @@ async function doSave() {
         table_name: form.table_name,
         column_name: form.column_name,
         column_type: form.column_type,
+        find_wh: form.find_wh,
         ttl_value: form.ttl_value,
         limit: form.limit,
         spec: form.spec,

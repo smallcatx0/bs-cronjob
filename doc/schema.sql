@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS `bs_tabledata_ttl` (
   `table_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '表名',
   `column_name` VARCHAR(128) NOT NULL DEFAULT '' COMMENT '依据字段名',
   `column_type` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '依据字段类型 unix/timestamp/datetime',
+  `find_wh` VARCHAR(255) NOT NULL DEFAULT '' COMMENT '附加筛选条件(可选)',
   `ttl_value` BIGINT NOT NULL DEFAULT 0 COMMENT 'TTL过期时间',
   `limit` BIGINT NOT NULL DEFAULT 0 COMMENT '一次执行条数',
   `spec` VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'cron表达式',

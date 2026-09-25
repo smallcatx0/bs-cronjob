@@ -418,7 +418,7 @@ func (s *DbStrategy) deleteTableRecord(ctx context.Context, cfg rds.TabledataTtl
 	}
 	defer dao.CloseTmpMysql(db)
 	st := time.Now()
-	sql, err := rds.BuildTtlDeleteSql(cfg.Tablename, cfg.ColumnName, cfg.ColumnType,
+	sql, err := rds.BuildTtlDeleteSql(cfg.Tablename, cfg.ColumnName, cfg.ColumnType, cfg.FindWh,
 		time.Now().Add(-time.Second*time.Duration(cfg.TtlValue)), cfg.Limit)
 	if err != nil {
 		return "", err

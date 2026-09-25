@@ -28,6 +28,7 @@ type TtlAdd struct {
 	Tablename  string `json:"table_name" binding:"required,max=128"`
 	ColumnName string `json:"column_name" binding:"required,max=64"`
 	ColumnType string `json:"column_type" binding:"required,oneof=unix timestamp datetime"`
+	FindWh     string `json:"find_wh" binding:"omitempty,max=255"`
 	TtlValue   int64  `json:"ttl_value" binding:"required,min=1"`
 	Limit      int64  `json:"limit" binding:"required,min=1"`
 	Spec       string `json:"spec" binding:"required"`
@@ -46,6 +47,7 @@ type TtlUpdate struct {
 	Tablename  string `json:"table_name" binding:"omitempty,max=128"`
 	ColumnName string `json:"column_name" binding:"omitempty,max=64"`
 	ColumnType string `json:"column_type" binding:"omitempty,oneof=unix timestamp datetime"`
+	FindWh     string `json:"find_wh" binding:"omitempty,max=255"`
 	TtlValue   int64  `json:"ttl_value" binding:"omitempty,min=1"`
 	Limit      int64  `json:"limit" binding:"omitempty,min=1"`
 	Desc       string `json:"desc" binding:"omitempty,max=255"`

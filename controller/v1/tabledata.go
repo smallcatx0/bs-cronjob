@@ -73,6 +73,7 @@ func (Tabledata) TtlAdd(c *gin.Context) {
 		Tablename:  p.Tablename,
 		ColumnName: p.ColumnName,
 		ColumnType: p.ColumnType,
+		FindWh:     p.FindWh,
 		TtlValue:   p.TtlValue,
 		Limit:      p.Limit,
 		Spec:       p.Spec,
@@ -138,6 +139,9 @@ func (Tabledata) TtlUpdate(c *gin.Context) {
 	}
 	if p.ColumnType != "" {
 		updates["column_type"] = p.ColumnType
+	}
+	if p.FindWh != "" {
+		updates["find_wh"] = p.FindWh
 	}
 	if p.TtlValue > 0 {
 		updates["ttl_value"] = p.TtlValue

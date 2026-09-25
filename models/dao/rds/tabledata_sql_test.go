@@ -35,7 +35,7 @@ func TestBuildTtlDeleteSql(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := BuildTtlDeleteSql("t_log", "created_at", tt.columnType, cutoff, 1000)
+			got, err := BuildTtlDeleteSql("t_log", "created_at", tt.columnType, "", cutoff, 1000)
 			if err != nil {
 				t.Fatalf("unexpected err: %s", err)
 			}
@@ -47,9 +47,22 @@ func TestBuildTtlDeleteSql(t *testing.T) {
 }
 
 func TestBuildTtlDeleteSqlInvalidColumnType(t *testing.T) {
-	_, err := BuildTtlDeleteSql("t_log", "created_at", "bad_type", baseNow, 1000)
+	_, err := BuildTtlDeleteSql("t_log", "created_at", "bad_type", "", baseNow, 1000)
 	if err == nil {
 		t.Fatal("expected error for invalid column_type, got nil")
+	}
+}
+
+// TestBuildTtlDeleteSqlWithFindWh 校验 find_wh 非空时追加到 WHERE, 为空时不产生悬空 AND
+func TestBuildTtlDeleteSqlWithFindWh(t *testing.T) {
+	cutoff := baseNow.Add(-3600 * time.Second) // 2026-09-21 11:00:00
+	got, err := BuildTtlDeleteSql("t_log", "created_at", ColumType_Datetime, "status = 0", cutoff, 1000)
+	if err != nil {
+		t.Fatalf("unexpected err: %s", err)
+	}
+	want := "DELETE FROM `t_log` WHERE `created_at` < '2026-09-21 11:00:00' AND status = 0 LIMIT 1000"
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
 	}
 }
 
@@ -58,6 +71,7 @@ func TestTtlParseSqlMatchesBuilder(t *testing.T) {
 		Tablename:  "t_log",
 		ColumnName: "created_at",
 		ColumnType: ColumType_Datetime,
+		FindWh:     "status = 0",
 		TtlValue:   60,
 		Limit:      500,
 	}
@@ -65,7 +79,7 @@ func TestTtlParseSqlMatchesBuilder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected err: %s", err)
 	}
-	want, err := BuildTtlDeleteSql(cfg.Tablename, cfg.ColumnName, cfg.ColumnType,
+	want, err := BuildTtlDeleteSql(cfg.Tablename, cfg.ColumnName, cfg.ColumnType, cfg.FindWh,
 		time.Now().Add(-time.Second*time.Duration(cfg.TtlValue)), cfg.Limit)
 	if err != nil {
 		t.Fatalf("unexpected err: %s", err)
