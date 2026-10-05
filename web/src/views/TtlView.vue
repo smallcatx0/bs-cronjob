@@ -55,10 +55,22 @@
       </el-table-column>
       <el-table-column label="操作" width="320" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" v-if="row.status !== 'online'" type="success" @click="doToggle(row, 'online')">上线</el-button>
-          <el-button size="small" v-else type="warning" @click="doToggle(row, 'offline')">下线</el-button>
+          <el-popconfirm v-if="row.status !== 'online'" title="确认上线该策略?" width="220" @confirm="doToggle(row, 'online')">
+            <template #reference>
+              <el-button size="small" type="success">上线</el-button>
+            </template>
+          </el-popconfirm>
+          <el-popconfirm v-else title="确认下线该策略?" width="220" @confirm="doToggle(row, 'offline')">
+            <template #reference>
+              <el-button size="small" type="warning">下线</el-button>
+            </template>
+          </el-popconfirm>
           <el-button size="small" :disabled="row.status === 'online'" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" type="danger" :disabled="row.status === 'online'" @click="doDelete(row)">删除</el-button>
+          <el-popconfirm title="确认删除该策略?" width="220" @confirm="doDelete(row)">
+            <template #reference>
+              <el-button size="small" type="danger" :disabled="row.status === 'online'">删除</el-button>
+            </template>
+          </el-popconfirm>
           <el-button size="small" link type="primary" @click="showSql(row)">预览SQL</el-button>
         </template>
       </el-table-column>
@@ -178,7 +190,7 @@
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { listTtl, addTtl, updateTtl, deleteTtl, toggleTtl, listStrategyLogs, parseSql } from '../api'
 import { fmtTime, fmtTtl } from '../utils/timeParser'
 import { cronToText } from '../utils/cron'
@@ -298,7 +310,6 @@ async function doToggle(row, status) {
 }
 
 async function doDelete(row) {
-  await ElMessageBox.confirm(`确认删除策略「${row.unkey}」?`, '提示', { type: 'warning' })
   await deleteTtl(row.id)
   ElMessage.success('已删除')
   load()

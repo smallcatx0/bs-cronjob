@@ -159,6 +159,10 @@ func (Jobs) Update(c *gin.Context) {
 		resp.Fail(c, err)
 		return
 	}
+	if job.Status == rds.StatusExpired {
+		resp.Fail(c, resp.JobExpired("任务已过期, 不可更新"))
+		return
+	}
 	if job.Status == rds.StatusOn {
 		resp.Fail(c, resp.ParamInValid("仅有停用的任务才可更新"))
 		return
@@ -250,6 +254,10 @@ func (Jobs) Run(c *gin.Context) {
 	job, err := rds.GetJob(p.ID)
 	if err != nil {
 		resp.Fail(c, err)
+		return
+	}
+	if job.Status == rds.StatusExpired {
+		resp.Fail(c, resp.JobExpired("任务已过期, 不可运行"))
 		return
 	}
 	err = tasks.EnqueueManual(job)

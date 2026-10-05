@@ -17,6 +17,7 @@ var (
 	Code_LoginTimeout = 10005
 	Code_IllegalToken = 10006
 	Code_Illegal      = 40003
+	Code_JobExpired   = 40010 // 任务已过期, 不可执行相关操作
 )
 
 var ErrNos = map[int]string{
@@ -30,6 +31,11 @@ var (
 	// 参数错误
 	ParamInValid = func(msg ...string) *Exception {
 		return NewException(http.StatusBadRequest, Code_ParamInValid, msg...)
+	}
+
+	// 任务已过期(状态 status=2), 不允许运行/更新等操作
+	JobExpired = func(msg ...string) *Exception {
+		return NewException(http.StatusBadRequest, Code_JobExpired, msg...)
 	}
 
 	ErrMysql     = NewException(http.StatusInternalServerError, Code_Mdb)

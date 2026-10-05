@@ -35,7 +35,7 @@
     <el-table :data="rows" v-loading="loading" border stripe size="small">
       <el-table-column prop="id" label="#" width="60" />
       <el-table-column prop="name" label="任务名称" min-width="140" show-overflow-tooltip />
-      <el-table-column label="状态" width="90">
+      <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
         </template>
@@ -46,7 +46,7 @@
           <span v-else>@{{ fmtTime(row.execute_at) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="上次执行" width="110">
+      <el-table-column label="上次执行" width="80">
         <template #default="{ row }">
           <el-tag v-if="row.last_log" :type="logTag(row.last_log.status)" size="small"
                   :title="`开始 ${fmtTime(row.last_log.started_at)} / 结束 ${fmtTime(row.last_log.finished_at)}`">
@@ -55,7 +55,7 @@
           <span v-else>-</span>
         </template>
       </el-table-column>
-      <el-table-column prop="type" label="任务类型" width="140">
+      <el-table-column prop="type" label="任务类型" width="80">
         <template #default="{ row }"><el-button size="small" type="primary" text @click="showContent(row)">{{ row.type }}</el-button></template>
         
       </el-table-column>
@@ -70,13 +70,30 @@
       <el-table-column label="下次运行" width="130">
         <template #default="{ row }">{{ fmtTime(row.next_run) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="320" fixed="right">
+      <el-table-column label="操作" width="390" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="doRun(row)">运行</el-button>
-          <el-button size="small" v-if="row.status !== 1" type="success" :disabled="row.status === 2" @click="doToggle(row, 1)">启用</el-button>
-          <el-button size="small" v-else type="warning" @click="doToggle(row, 0)">停用</el-button>
-          <el-button size="small" :disabled="row.status === 1" @click="openEdit(row)">编辑</el-button>
-          <el-button size="small" type="danger" :disabled="row.status === 1" @click="doDelete(row)">删除</el-button>
+          <el-popconfirm title="确认立即运行该任务?" width="220" @confirm="doRun(row)">
+            <template #reference>
+              <el-button size="small" :disabled="row.status === 2">运行</el-button>
+            </template>
+          </el-popconfirm>
+          <el-popconfirm v-if="row.status !== 1" title="确认启用该任务?" width="220" @confirm="doToggle(row, 1)">
+            <template #reference>
+              <el-button size="small" type="success" :disabled="row.status === 2">启用</el-button>
+            </template>
+          </el-popconfirm>
+          <el-popconfirm v-else title="确认停用该任务?" width="220" @confirm="doToggle(row, 0)">
+            <template #reference>
+              <el-button size="small" type="warning">停用</el-button>
+            </template>
+          </el-popconfirm>
+          <el-button size="small" :disabled="row.status === 1 || row.status === 2" @click="openEdit(row)">编辑</el-button>
+          <el-button size="small" @click="openCopy(row)">复制</el-button>
+          <el-popconfirm title="确认删除该任务?" width="220" @confirm="doDelete(row)">
+            <template #reference>
+              <el-button size="small" type="danger" :disabled="row.status === 1">删除</el-button>
+            </template>
+          </el-popconfirm>
         </template>
       </el-table-column>
     </el-table>
@@ -226,7 +243,7 @@
 
 <script setup>
 import { reactive, ref, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { listJobs, addJob, updateJob, deleteJob, runJob, toggleJob, listGoFuncs, listDingRobots, listLogs } from '../api'
 import { cronToText } from '../utils/cron'
 import { fmtTime } from '../utils/timeParser'
@@ -346,6 +363,24 @@ async function load(p) {
   }
 }
 
+// 复制新增：打开新建弹窗并带上该条数据内容，名称加 -copy 后缀避免重名冲突
+// 同时重置 id 及历史运行时统计字段，避免新任务携带原任务的执行数据造成展示混淆
+function openCopy(row) {
+  openEdit({
+    ...row,
+    id: null,
+    name: `${row.name}-copy`,
+    // 历史运行时统计置空/初始值
+    status: 0,
+    last_log: null,
+    last_run_at: null,
+    next_run: null,
+    run_count: 0,
+    // once 任务清空原执行时间，避免复制后立即过期，需用户重新选择
+    execute_at: row.schedule_type === 'once' ? null : row.execute_at,
+  })
+}
+
 function openEdit(row) {
   Object.assign(form, row
     ? { id: row.id, name: row.name, description: row.description || '', type: row.type, schedule_type: row.schedule_type, cron_expr: row.cron_expr, execute_at: fmtTime(row.execute_at) === '-' ? '' : fmtTime(row.execute_at), timeout_sec: row.timeout_sec }
@@ -454,7 +489,6 @@ async function doToggle(row, status) {
 }
 
 async function doDelete(row) {
-  await ElMessageBox.confirm(`确认删除任务「${row.name}」?`, '提示', { type: 'warning' })
   await deleteJob(row.id)
   ElMessage.success('已删除')
   load()
